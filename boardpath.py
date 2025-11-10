@@ -1,5 +1,6 @@
 import argparse
 import math
+import random
 from dataclasses import asdict
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from datasets.build_boardpath_dataset import *
@@ -30,10 +31,13 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
     bdh_params = BDHParameters(
         vocab_cnt=get_vocab_cnt(),
         seq_len=boardpath_params.board_size * boardpath_params.board_size, # TODO: **2?
-        N=2500,
+        H=4,
+        N=4*1028,
         D=128,
         L=4,
-        dropout=0.05
+        dropout=0.05,
+        use_rope=False,
+        use_abs_pos=True
     )
 
     bdh_train_params = BDHTrainParameters(
@@ -179,6 +183,17 @@ def run_inference(path: str):
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
     print()
 
+def set_all_seeds(seed: int):
+    torch.manual_seed(seed)
+    random.seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+
 def format_board(board_tensor: torch.Tensor, board_size: int) -> str:
     """Format a flattened board tensor as a visual grid."""
     board = board_tensor.view(board_size, board_size)
@@ -190,6 +205,7 @@ def format_board(board_tensor: torch.Tensor, board_size: int) -> str:
     return '\n'.join(result)
 
 if __name__ == '__main__':
+    set_all_seeds(1337)
     parser = argparse.ArgumentParser(description="BDH Boardpath Training and Inference")
     parser.add_argument("--mode", choices=["train", "inference"], required=True,
                         help="Mode to run: train (trains and saced model) or inference (loads model and runs on random sample)")
