@@ -233,17 +233,18 @@ def run_inference(path: str):
         hub_only=False
     )
 
-    # 2. E @ Dx (communication) - Hub only
-    print("\n    2/4: E @ Dx (communication) - Hub only")
+    # 2. E @ Dx (communication) - Hub only (with interpolation)
+    print("\n    2/4: E @ Dx (communication) - Hub only (smooth)")
     visualize_graph_activations(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
         save_path='graph_e_dx_hub.gif',
         top_k_edges=5000,
-        duration=500,
+        duration=170,  # Shorter duration for smoother animation
         topology_type='e_dx',
-        hub_only=True
+        hub_only=True,
+        interpolate_frames=5  # 3x interpolation for smooth transitions
     )
 
     # 3. Dx.T @ Dx (co-activation) - Full
@@ -259,17 +260,18 @@ def run_inference(path: str):
         hub_only=False
     )
 
-    # 4. Dx.T @ Dx (co-activation) - Hub only
-    print("\n    4/4: Dx.T @ Dx (co-activation) - Hub only")
+    # 4. Dx.T @ Dx (co-activation) - Hub only (with interpolation)
+    print("\n    4/4: Dx.T @ Dx (co-activation) - Hub only (smooth)")
     visualize_graph_activations(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
         save_path='graph_dx_coact_hub.gif',
         top_k_edges=5000,
-        duration=500,
+        duration=170,  # Shorter duration for smoother animation
         topology_type='dx_coact',
-        hub_only=True
+        hub_only=True,
+        interpolate_frames=3  # 3x interpolation for smooth transitions
     )
 
     print("\nVisualization files generated:")
@@ -277,9 +279,9 @@ def run_inference(path: str):
     print("  - neuron_activations.gif")
     print("  - synapse_matrix.gif")
     print("  - graph_e_dx_full.gif (E@Dx communication, all neurons)")
-    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only)")
+    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only, 3x interpolated)")
     print("  - graph_dx_coact_full.gif (Dx.T@Dx co-activation, all neurons)")
-    print("  - graph_dx_coact_hub.gif (Dx.T@Dx co-activation, hub only)")
+    print("  - graph_dx_coact_hub.gif (Dx.T@Dx co-activation, hub only, 3x interpolated)")
     print()
 
 def set_all_seeds(seed: int):

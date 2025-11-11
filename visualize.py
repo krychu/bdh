@@ -286,14 +286,15 @@ def visualize_graph_activations(
     duration: int = 500,
     layout_seed: int = 42,
     topology_type: str = 'e_dx',
-    hub_only: bool = False
+    hub_only: bool = False,
+    interpolate_frames: int = 1
 ):
     """
     Create animated GIF with dual-layer color encoding:
 
     - Graph structure (layout): Topology matrix (E @ Dx or Dx.T @ Dx)
     - Edge base color (gray): Structural weight (always visible if > threshold)
-    - Edge overlay (green): Synapse activation per layer
+    - Edge overlay (red): Synapse activation per layer
     - Node base color: Light gray (always visible)
     - Node overlay (red): Neuron activation per layer
 
@@ -307,6 +308,7 @@ def visualize_graph_activations(
         layout_seed: Random seed for reproducible layout (default: 42)
         topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
         hub_only: If True, show only connected neurons (zoomed view)
+        interpolate_frames: Number of interpolated frames between each layer (1=no interpolation, 3=2 extra frames)
     """
     import io
     from matplotlib.colors import Normalize
@@ -391,6 +393,34 @@ def visualize_graph_activations(
     pos = nx.spring_layout(G, k=1/np.sqrt(N_viz), iterations=50, seed=layout_seed)
 
     print(f"Layout computed. Creating animation...")
+
+    # Interpolate frames if requested
+    if interpolate_frames > 1:
+        print(f"Interpolating {interpolate_frames}x frames between layers...")
+        x_frames_interp = []
+        synapse_frames_interp = []
+
+        for i in range(len(x_frames) - 1):
+            # Add current frame
+            x_frames_interp.append(x_frames[i])
+            synapse_frames_interp.append(synapse_frames[i])
+
+            # Add interpolated frames
+            for j in range(1, interpolate_frames):
+                alpha = j / interpolate_frames  # 0 to 1
+                # Linear interpolation
+                x_interp = (1 - alpha) * x_frames[i] + alpha * x_frames[i + 1]
+                synapse_interp = (1 - alpha) * synapse_frames[i] + alpha * synapse_frames[i + 1]
+                x_frames_interp.append(x_interp)
+                synapse_frames_interp.append(synapse_interp)
+
+        # Add final frame
+        x_frames_interp.append(x_frames[-1])
+        synapse_frames_interp.append(synapse_frames[-1])
+
+        x_frames = x_frames_interp
+        synapse_frames = synapse_frames_interp
+        print(f"Total frames after interpolation: {len(x_frames)}")
 
     # Normalize structural weights for gray base color (0 to 1)
     struct_norm = Normalize(vmin=0, vmax=edge_weights_structural.max())
@@ -478,7 +508,12 @@ def visualize_graph_activations(
         )
 
         title_mode = " (Hub Only)" if hub_only else ""
-        ax.set_title(f'Layer {layer_idx} - {topology_desc}{title_mode}',
+        # Show fractional layer index if interpolated
+        if interpolate_frames > 1:
+            layer_display = f"{layer_idx / interpolate_frames:.2f}"
+        else:
+            layer_display = str(layer_idx)
+        ax.set_title(f'Layer {layer_display} - {topology_desc}{title_mode}',
                      fontsize=16, fontweight='bold')
         ax.axis('off')
 
