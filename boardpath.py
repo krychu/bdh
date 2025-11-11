@@ -195,14 +195,16 @@ def run_inference(path: str):
         visualize_x_frames,
         visualize_synapse_frames,
         visualize_graph_activations,
-        get_parameter_topology
+        get_parameter_topology,
+        combine_gifs_side_by_side
     )
 
     visualize_output_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size,
         save_path='output_predictions.gif',
-        duration=500
+        duration=170,  # Match interpolated duration
+        interpolate_frames=1  # Match graph interpolation
     )
 
     visualize_x_frames(
@@ -244,7 +246,7 @@ def run_inference(path: str):
         duration=170,  # Shorter duration for smoother animation
         topology_type='e_dx',
         hub_only=True,
-        interpolate_frames=5  # 3x interpolation for smooth transitions
+        interpolate_frames=1  # 3x interpolation for smooth transitions
     )
 
     # 3. Dx.T @ Dx (co-activation) - Full
@@ -271,7 +273,16 @@ def run_inference(path: str):
         duration=170,  # Shorter duration for smoother animation
         topology_type='dx_coact',
         hub_only=True,
-        interpolate_frames=3  # 3x interpolation for smooth transitions
+        interpolate_frames=1  # 3x interpolation for smooth transitions
+    )
+
+    # Create side-by-side combined visualization
+    print("\n  Creating combined visualization (board + network)...")
+    combine_gifs_side_by_side(
+        left_gif_path='output_predictions.gif',
+        right_gif_path='graph_e_dx_hub.gif',
+        output_path='combined_board_network.gif',
+        spacing=20
     )
 
     print("\nVisualization files generated:")
@@ -279,9 +290,10 @@ def run_inference(path: str):
     print("  - neuron_activations.gif")
     print("  - synapse_matrix.gif")
     print("  - graph_e_dx_full.gif (E@Dx communication, all neurons)")
-    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only, 3x interpolated)")
+    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only, 5x interpolated)")
     print("  - graph_dx_coact_full.gif (Dx.T@Dx co-activation, all neurons)")
     print("  - graph_dx_coact_hub.gif (Dx.T@Dx co-activation, hub only, 3x interpolated)")
+    print("  - combined_board_network.gif (board + E@Dx hub, side-by-side)")
     print()
 
 def set_all_seeds(seed: int):

@@ -62,7 +62,8 @@ def visualize_output_frames(
     output_frames: List[torch.Tensor],
     board_size: int,
     save_path: str,
-    duration: int = 500
+    duration: int = 500,
+    interpolate_frames: int = 1
 ):
     """
     Create animated GIF of board predictions through layers.
@@ -72,7 +73,18 @@ def visualize_output_frames(
         board_size: Size of the board (e.g., 8 for 8x8)
         save_path: Path to save the GIF (e.g., 'output_predictions.gif')
         duration: Duration of each frame in milliseconds (default: 500ms)
+        interpolate_frames: Number of frames between layers (1=no interpolation, simply repeat each frame)
     """
+    # Interpolate frames by repeating each frame
+    if interpolate_frames > 1:
+        output_frames_interp = []
+        for i in range(len(output_frames) - 1):
+            # Repeat current frame interpolate_frames times
+            for _ in range(interpolate_frames):
+                output_frames_interp.append(output_frames[i])
+        # Add final frame
+        output_frames_interp.append(output_frames[-1])
+        output_frames = output_frames_interp
     # Define colors for each cell type
     # FLOOR=0: white, WALL=1: black, START=2: green, END=3: red, PATH=4: yellow
     cmap = ListedColormap(['white', 'black', 'lime', 'red', 'gold'])
@@ -571,6 +583,115 @@ def visualize_graph_activations(
     )
     print(f"Saved graph activation GIF to: {save_path}")
     print(f"  Frames: {len(images)}")
+    print(f"  Duration per frame: {duration}ms")
+
+def combine_gifs_side_by_side(
+    left_gif_path: str,
+    right_gif_path: str,
+    output_path: str,
+    spacing: int = 20
+):
+    """
+    Combine two GIFs side by side into a single GIF.
+
+    Args:
+        left_gif_path: Path to left GIF
+        right_gif_path: Path to right GIF
+        output_path: Path to save combined GIF
+        spacing: Pixels of white space between GIFs (default: 20)
+    """
+    print(f"Combining GIFs side by side...")
+    print(f"  Left: {left_gif_path}")
+    print(f"  Right: {right_gif_path}")
+
+    # Open both GIFs
+    left_gif = Image.open(left_gif_path)
+    right_gif = Image.open(right_gif_path)
+
+    # Get frame counts
+    left_frames = []
+    right_frames = []
+
+    # Extract all frames from left GIF
+    try:
+        while True:
+            left_frames.append(left_gif.copy())
+            left_gif.seek(left_gif.tell() + 1)
+    except EOFError:
+        pass
+
+    # Extract all frames from right GIF
+    try:
+        while True:
+            right_frames.append(right_gif.copy())
+            right_gif.seek(right_gif.tell() + 1)
+    except EOFError:
+        pass
+
+    print(f"  Left frames: {len(left_frames)}")
+    print(f"  Right frames: {len(right_frames)}")
+
+    # Handle frame count mismatch by repeating frames
+    if len(left_frames) != len(right_frames):
+        print(f"  Warning: Frame count mismatch, interpolating...")
+        max_frames = max(len(left_frames), len(right_frames))
+
+        # Repeat last frame if needed
+        while len(left_frames) < max_frames:
+            left_frames.append(left_frames[-1].copy())
+        while len(right_frames) < max_frames:
+            right_frames.append(right_frames[-1].copy())
+
+    # Get dimensions
+    left_width, left_height = left_frames[0].size
+    right_width, right_height = right_frames[0].size
+
+    # Calculate combined dimensions
+    combined_width = left_width + spacing + right_width
+    combined_height = max(left_height, right_height)
+
+    print(f"  Combined size: {combined_width}×{combined_height}")
+
+    # Create combined frames
+    combined_frames = []
+    for left_frame, right_frame in zip(left_frames, right_frames):
+        # Create white background
+        combined = Image.new('RGB', (combined_width, combined_height), 'white')
+
+        # Convert frames to RGB if needed
+        if left_frame.mode != 'RGB':
+            left_frame = left_frame.convert('RGB')
+        if right_frame.mode != 'RGB':
+            right_frame = right_frame.convert('RGB')
+
+        # Paste left frame (centered vertically)
+        left_y = (combined_height - left_height) // 2
+        combined.paste(left_frame, (0, left_y))
+
+        # Paste right frame (centered vertically)
+        right_y = (combined_height - right_height) // 2
+        combined.paste(right_frame, (left_width + spacing, right_y))
+
+        combined_frames.append(combined)
+
+    # Get duration from original GIF (try to extract from info)
+    try:
+        duration = left_gif.info.get('duration', 500)
+    except:
+        duration = 500
+
+    # Save combined GIF
+    combined_frames[0].save(
+        output_path,
+        save_all=True,
+        append_images=combined_frames[1:],
+        duration=duration,
+        loop=0,
+        optimize=False
+    )
+
+    print(f"Saved combined GIF to: {output_path}")
+    print(f"  Frames: {len(combined_frames)}")
     print(f"  Duration per frame: {duration}ms")
 
 if __name__ == '__main__':
