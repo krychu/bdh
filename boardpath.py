@@ -33,9 +33,9 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
         seq_len=boardpath_params.board_size * boardpath_params.board_size, # TODO: **2?
         H=4,
         # N=4*1028,
-        N=4*2056,
+        N=2*2056,
         # D=128,
-        D=256,
+        D=128,
         L=8,
         # dropout=0.05,
         dropout=0.2,
@@ -44,11 +44,12 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
     )
 
     bdh_train_params = BDHTrainParameters(
-        epoch_cnt=50,
+        epoch_cnt=100,
         batch_size=64,
         learning_rate=1e-3,
         # weight_decay=0.05
-        weight_decay=0.1
+        weight_decay=0.1,
+        grad_clip=None
     )
 
     return boardpath_params, bdh_params, bdh_train_params
@@ -173,7 +174,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv = bdh(input_flat_bs)
+        logits_btv, output_frames, x_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -186,6 +187,99 @@ def run_inference(path: str):
     print(format_board(predicted.squeeze(0).cpu(), boardpath_params.board_size))
 
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
+
+    # Generate visualizations
+    print("\nGenerating visualizations...")
+    from visualize import (
+        visualize_output_frames,
+        visualize_x_frames,
+        visualize_synapse_frames,
+        visualize_graph_activations,
+        get_parameter_topology
+    )
+
+    visualize_output_frames(
+        output_frames=output_frames,
+        board_size=boardpath_params.board_size,
+        save_path='output_predictions.gif',
+        duration=500
+    )
+
+    visualize_x_frames(
+        x_frames=x_frames,
+        save_path='neuron_activations.gif',
+        duration=500
+    )
+
+    visualize_synapse_frames(
+        synapse_frames=synapse_frames,
+        save_path='synapse_matrix.gif',
+        duration=500
+    )
+
+    # Generate graph visualizations (2 topologies × 2 modes = 4 variants)
+    print("\n  Creating graph visualizations...")
+
+    # 1. E @ Dx (communication) - Full
+    print("\n    1/4: E @ Dx (communication) - Full view")
+    visualize_graph_activations(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        model=bdh,
+        save_path='graph_e_dx_full.gif',
+        top_k_edges=5000,
+        duration=500,
+        topology_type='e_dx',
+        hub_only=False
+    )
+
+    # 2. E @ Dx (communication) - Hub only
+    print("\n    2/4: E @ Dx (communication) - Hub only")
+    visualize_graph_activations(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        model=bdh,
+        save_path='graph_e_dx_hub.gif',
+        top_k_edges=5000,
+        duration=500,
+        topology_type='e_dx',
+        hub_only=True
+    )
+
+    # 3. Dx.T @ Dx (co-activation) - Full
+    print("\n    3/4: Dx.T @ Dx (co-activation) - Full view")
+    visualize_graph_activations(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        model=bdh,
+        save_path='graph_dx_coact_full.gif',
+        top_k_edges=5000,
+        duration=500,
+        topology_type='dx_coact',
+        hub_only=False
+    )
+
+    # 4. Dx.T @ Dx (co-activation) - Hub only
+    print("\n    4/4: Dx.T @ Dx (co-activation) - Hub only")
+    visualize_graph_activations(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        model=bdh,
+        save_path='graph_dx_coact_hub.gif',
+        top_k_edges=5000,
+        duration=500,
+        topology_type='dx_coact',
+        hub_only=True
+    )
+
+    print("\nVisualization files generated:")
+    print("  - output_predictions.gif")
+    print("  - neuron_activations.gif")
+    print("  - synapse_matrix.gif")
+    print("  - graph_e_dx_full.gif (E@Dx communication, all neurons)")
+    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only)")
+    print("  - graph_dx_coact_full.gif (Dx.T@Dx co-activation, all neurons)")
+    print("  - graph_dx_coact_hub.gif (Dx.T@Dx co-activation, hub only)")
     print()
 
 def set_all_seeds(seed: int):
@@ -210,15 +304,22 @@ def format_board(board_tensor: torch.Tensor, board_size: int) -> str:
     return '\n'.join(result)
 
 if __name__ == '__main__':
-    set_all_seeds(1337)
     parser = argparse.ArgumentParser(description="BDH Boardpath Training and Inference")
     parser.add_argument("--mode", choices=["train", "inference"], required=True,
                         help="Mode to run: train (trains and saced model) or inference (loads model and runs on random sample)")
+    parser.add_argument("--seed",
+                        help="Seed, only relevant in train mode")
     parser.add_argument("--model", default="boardpath.pt",
                         help="Model file path (default: boardpath.pt)")
     args = parser.parse_args()
 
     if args.mode == "train":
+        if args.seed:
+            seed = int(args.seed)
+            set_all_seeds(seed) # 1337
+            print(f"seed: {seed}")
+        else:
+            print("seed: random")
         run_training()
     elif args.mode == "inference":
         run_inference(args.model)

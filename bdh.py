@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, List
 import math
 import time
 import random
@@ -31,6 +31,7 @@ class BDHTrainParameters:
     batch_size: int
     learning_rate: float
     weight_decay: float
+    grad_clip: float | None
 
 class BDH(nn.Module):
     def __init__(self, params: BDHParameters):
@@ -39,7 +40,7 @@ class BDH(nn.Module):
         self.N = N
         self.H = H
         self.L = L
-        self.linear_attn = LinearAttention(self.N, self.H, params.use_rope)
+        self.linear_attn = LinearAttention(self.N, self.H, params.use_rope, params.seq_len)
         self.E = nn.Parameter(torch.zeros((N, D)).normal_(std=0.02))
         self.Dx = nn.Parameter(torch.zeros((H, D, N//H)).normal_(std=0.02))
         self.Dy = nn.Parameter(torch.zeros((H, D, N//H)).normal_(std=0.02))
@@ -55,6 +56,14 @@ class BDH(nn.Module):
             # nn.init.normal_(self.pos.weight, std=0.02)
             nn.init.normal_(self.pos.weight, mean=0.0, std=1.0/math.sqrt(D))
 
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
     # input_ BT
     # x      BHTNh
     # y      BHTNh
@@ -64,6 +73,7 @@ class BDH(nn.Module):
     # E      ND
     # Dx     HDNh
     # Dy     HDNh
+
 
     def forward(self, input_, capture_frames = False):
         B, T = input_.size()
@@ -76,13 +86,24 @@ class BDH(nn.Module):
         #     v_ast = v_ast + abs_pos_ast
 
         if self.use_abs_pos:
-            abs_pos_ast = self.pos(self.pos_idx) # TD
+            abs_pos_ast = self.pos(self.pos_idx) / math.sqrt(self.L) # TD
 
-        frames: List[torch.Tensor] = []
-        def take_frame(v_ast):
+        output_frames: List[torch.Tensor] = []
+        x_frames: List[torch.Tensor] = []
+        synapse_frames: List[torch.Tensor] = []
+        def take_frame(v_ast, x, y):
             logits_bsv = v_ast.squeeze(1) @ self.readout
             predicted = logits_bsv.argmax(dim=-1)
-            frames.append(predicted)
+            output_frames.append(predicted[0])  # (T,) - single sample
+
+            # Use only first sample for x and synapse frames
+            x_reshaped = x[0].transpose(0, 1).reshape(T, self.N)  # HTNh -> THNh -> TN (first sample only)
+            x_frames.append(x_reshaped.mean(dim=0).detach().clone())  # (N,) - avg activation per neuron across positions
+
+            # Compute synapse matrix for first sample: average(x.T @ y) across time
+            y_reshaped = y[0].transpose(0, 1).reshape(T, self.N)  # HTNh -> THNh -> TN (first sample only)
+            synapse = (x_reshaped.T @ y_reshaped) / T  # (N, N) - averaged over time
+            synapse_frames.append(synapse.detach().clone())  # (N, N) - synapse matrix
 
         for _ in range(self.L):
             if self.use_abs_pos:
@@ -93,16 +114,22 @@ class BDH(nn.Module):
 
             a_ast = self.linear_attn(x, x, v_ast) # BHTNh @ (BHTNh^T @ B1TD) -> BHTNh @ (BHNhT @ B1TD) -> BHTNh @ BHNhD -> BHTD
 
-            y = F.relu(a_ast @ self.Dy) * x # BHTD @ HDNh -> BHTNh
+            # y = F.relu(a_ast @ self.Dy) * x # BHTD @ HDNh -> BHTNh
+            # FIXED
+            y = F.relu(self.ln(a_ast) @ self.Dy) * x # BHTD @ HDNh -> BHTNh
             y = y.transpose(1, 2).reshape(B, 1, T, self.N) # BHTNh -> BTHNh -> B1TN
             y = self.drop(y)
 
             v_ast = v_ast + self.ln(y @ self.E) # B1TD + (B1TN @ ND) -> B1TD + B1TD -> B1TD
             v_ast = self.ln(v_ast)
 
-            capture_frames and take_frame(v_ast) # HERE
+            capture_frames and take_frame(v_ast, x, y) # HERE
 
-        return v_ast.squeeze(1) @ self.readout # squeeze(B1TD) @ BDV -> BTD @ BDV -> BTV
+        logits = v_ast.squeeze(1) @ self.readout # squeeze(B1TD) @ BDV -> BTD @ BDV -> BTV
+
+        if capture_frames:
+            return logits, output_frames, x_frames, synapse_frames
+        return logits
 
 # For RoPE pairs we use concatenated layout, instead of interleaved. For
 # (a,b,c,d) the pairs are (a,c) and (b,d).
@@ -175,13 +202,15 @@ class RotaryEmbedding(torch.nn.Module):
         return self.cos_cached[:seq_len], self.sin_cached[:seq_len]
 
 class LinearAttention(nn.Module):
-    def __init__(self, N: int, H: int, use_rope: bool):
+    def __init__(self, N: int, H: int, use_rope: bool, max_T: int):
         super().__init__()
         self.use_rope = use_rope
         if self.use_rope:
             self.rotary = RotaryEmbedding(
                 head_dim=N//H,
-                max_position_embeddings=N//H,
+                # max_position_embeddings=N//H,
+                # FIXED
+                max_position_embeddings=max_T,
                 base=10000.0
             )
 
@@ -229,7 +258,7 @@ def evaluate(
         #logics_bvt = logitcs_bcv.transpose(1, 2) # BVT
         # loss = ce_loss(logitcs_bvt, y_bs)
 
-        total_loss += float(loss.detach()) * B * S
+        total_loss += loss.item() * B * S
         total_loss_tokens += B * S
 
         preds = logits_btv.argmax(dim=-1) # BS
@@ -259,10 +288,6 @@ def train(
         weight_decay=bdh_train_params.weight_decay
     )
 
-    # dtype = float16
-    # scaler = torch.amp.GradScaler(device=device.type, enabled=False)
-    scaler = torch.amp.GradScaler(device=device.type, enabled=True)
-
     epoch_callback(
         bdh=bdh,
         epoch_idx=-1,
@@ -286,19 +311,22 @@ def train(
             y_bs = y_bs.to(device)
             B, S = x_bs.shape
 
+            optimizer.zero_grad(set_to_none=True)
             logits_bcs = bdh(x_bs)  # BTC (batch, seq, vocab)
             logits_bcs = logits_bcs.transpose(1, 2)  # BCT (batch, vocab, seq)
             loss = ce_loss(logits_bcs, y_bs)
-            total_epoch_loss += float(loss.detach()) * B * S
+            loss.backward()
+            if bdh_train_params.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(bdh.parameters(), bdh_train_params.grad_clip)
+            optimizer.step()
+
+            # total_epoch_loss += float(loss.detach()) * B * S
+            total_epoch_loss += loss.item() * B * S
             total_epoch_tokens += B * S
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
-
-            # loss.backward()
-            # optimizer.step()
+            # scaler.scale(loss).backward()
+            # scaler.step(optimizer)
+            # scaler.update()
             # optimizer.zero_grad()
 
         epoch_time = time.time() - epoch_start_time
@@ -341,6 +369,7 @@ def bdh_summary(
     print(f"{'batch_size':<20} {bdh_train_params.batch_size:>10}")
     print(f"{'lr':<20} {bdh_train_params.learning_rate:>10}")
     print(f"{'weight_decay':<20} {bdh_train_params.weight_decay:>10}")
+    print(f"{'grad_clip':<20} {str(bdh_train_params.grad_clip):>10}")
 
     print("\nModel Statistics:")
     print("-" * 31)
