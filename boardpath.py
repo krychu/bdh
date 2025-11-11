@@ -32,25 +32,29 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
         vocab_cnt=get_vocab_cnt(),
         seq_len=boardpath_params.board_size * boardpath_params.board_size, # TODO: **2?
         H=4,
-        N=4*1028,
-        D=128,
-        L=4,
-        dropout=0.05,
-        use_rope=False,
-        use_abs_pos=True
+        # N=4*1028,
+        N=4*2056,
+        # D=128,
+        D=256,
+        L=8,
+        # dropout=0.05,
+        dropout=0.2,
+        use_rope=True,
+        use_abs_pos=False
     )
 
     bdh_train_params = BDHTrainParameters(
-        epoch_cnt=10,
-        batch_size=16,
+        epoch_cnt=50,
+        batch_size=64,
         learning_rate=1e-3,
+        # weight_decay=0.05
         weight_decay=0.1
     )
 
     return boardpath_params, bdh_params, bdh_train_params
 
 def get_device():
-    return torch.device("cpu") # TODO
+    # return torch.device("cpu") # TODO
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -160,6 +164,7 @@ def run_inference(path: str):
     bdh, boardpath_params, bdh_params, bdh_train_params = load_bdh(path, device)
     print(f"Model loaded from: {path}")
 
+    bdh.to(device)
     bdh.eval()
     input_board, target_board = generate_board(
         size=boardpath_params.board_size,

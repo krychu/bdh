@@ -52,7 +52,8 @@ class BDH(nn.Module):
         if params.use_abs_pos:
             self.pos = nn.Embedding(params.seq_len, D)
             self.register_buffer("pos_idx", torch.arange(params.seq_len, dtype=torch.long), persistent=False)
-            nn.init.normal_(self.pos.weight, std=0.02)
+            # nn.init.normal_(self.pos.weight, std=0.02)
+            nn.init.normal_(self.pos.weight, mean=0.0, std=1.0/math.sqrt(D))
 
     # input_ BT
     # x      BHTNh
@@ -64,14 +65,29 @@ class BDH(nn.Module):
     # Dx     HDNh
     # Dy     HDNh
 
-    def forward(self, input_):
+    def forward(self, input_, capture_frames = False):
         B, T = input_.size()
+        # print("DEVICE")
+        # print(input_.device)
+        # print(self.emb.weight.device)
         v_ast = self.ln(self.emb(input_).unsqueeze(1)) # BT[int] -> B1TD
+        # if self.use_abs_pos:
+        #     abs_pos_ast = self.pos(self.pos_idx) # TD
+        #     v_ast = v_ast + abs_pos_ast
+
         if self.use_abs_pos:
             abs_pos_ast = self.pos(self.pos_idx) # TD
-            v_ast = v_ast + abs_pos_ast
+
+        frames: List[torch.Tensor] = []
+        def take_frame(v_ast):
+            logits_bsv = v_ast.squeeze(1) @ self.readout
+            predicted = logits_bsv.argmax(dim=-1)
+            frames.append(predicted)
 
         for _ in range(self.L):
+            if self.use_abs_pos:
+                v_ast = v_ast + abs_pos_ast
+
             # residual?
             x = F.relu(v_ast @ self.Dx) # B1TD @ HDNh -> BHTNh
 
@@ -83,6 +99,8 @@ class BDH(nn.Module):
 
             v_ast = v_ast + self.ln(y @ self.E) # B1TD + (B1TN @ ND) -> B1TD + B1TD -> B1TD
             v_ast = self.ln(v_ast)
+
+            capture_frames and take_frame(v_ast) # HERE
 
         return v_ast.squeeze(1) @ self.readout # squeeze(B1TD) @ BDV -> BTD @ BDV -> BTV
 
@@ -170,7 +188,7 @@ class LinearAttention(nn.Module):
     def forward(self, Q, K, V):
         if self.use_rope:
             _, _, T, _ = Q.size()
-            cos_sin = self.rotary(T) if self.rotary is not None else None # (cos, sin) each [S, Dh]
+            cos_sin = self.rotary(T) # (cos, sin) each [S, Dh]
             cos, sin = cos_sin
             QR = apply_rope(Q, cos, sin)
         else:
@@ -234,8 +252,6 @@ def train(
         device: torch.device,
         epoch_callback
 ):
-    bdh.train()
-
     ce_loss = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(
         bdh.parameters(),
@@ -244,7 +260,8 @@ def train(
     )
 
     # dtype = float16
-    scaler = torch.amp.GradScaler(device=device.type, enabled=False)
+    # scaler = torch.amp.GradScaler(device=device.type, enabled=False)
+    scaler = torch.amp.GradScaler(device=device.type, enabled=True)
 
     epoch_callback(
         bdh=bdh,
@@ -258,6 +275,7 @@ def train(
 
     batch_cnt = len(train_loader)
     for epoch_idx in range(bdh_train_params.epoch_cnt):
+        bdh.train()
         epoch_start_time = time.time()
 
         total_epoch_loss = 0.0
@@ -278,6 +296,10 @@ def train(
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
+
+            # loss.backward()
+            # optimizer.step()
+            # optimizer.zero_grad()
 
         epoch_time = time.time() - epoch_start_time
         epoch_loss = total_epoch_loss / total_epoch_tokens
