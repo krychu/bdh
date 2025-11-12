@@ -11,6 +11,24 @@ from utils.build_boardpath_dataset import FLOOR, WALL, START, END, PATH
 # Helper Functions for Frame Management
 # ============================================================================
 
+def add_watermark(fig, ax):
+    """
+    Add GitHub URL watermark to bottom-right corner of the plot.
+
+    Args:
+        fig: Matplotlib figure
+        ax: Matplotlib axes
+    """
+    # Add text in bottom-right corner of the axes
+    ax.text(0.98, 0.02, 'https://github.com/krychu/bdh',
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment='bottom',
+            horizontalalignment='right',
+            color='black',
+            alpha=1.0,
+            family='monospace')
+
 def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
     """
     Save a list of PIL images as an animated GIF.
@@ -201,6 +219,9 @@ def generate_board_frames(
         ]
         ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1),
                   fontsize=12, frameon=True)
+
+        # Add watermark
+        add_watermark(fig, ax)
 
         plt.tight_layout()
 
@@ -477,6 +498,9 @@ def generate_graph_frames(
                 fontsize=10, verticalalignment='bottom',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
                 family='monospace')
+
+        # Add watermark
+        add_watermark(fig, ax)
 
         plt.tight_layout()
 
