@@ -29,16 +29,13 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
     )
 
     bdh_params = BDHParameters(
-        vocab_cnt=get_vocab_cnt(),
-        seq_len=boardpath_params.board_size * boardpath_params.board_size, # TODO: **2?
+        V=get_vocab_cnt(),
+        T=boardpath_params.board_size ** 2,
         H=4,
-        # N=4*1028,
-        N=2*2056,
-        # D=128,
+        N=4*1028,
         D=128,
         L=8,
-        # dropout=0.05,
-        dropout=0.2,
+        dropout=0.2, # 0.05
         use_rope=True,
         use_abs_pos=False
     )
@@ -47,15 +44,14 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
         epoch_cnt=100,
         batch_size=64,
         learning_rate=1e-3,
-        # weight_decay=0.05
-        weight_decay=0.1,
+        weight_decay=0.1, # 0.05
         grad_clip=None
     )
 
     return boardpath_params, bdh_params, bdh_train_params
 
 def get_device():
-    # return torch.device("cpu") # TODO
+    return torch.device("cpu")
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -93,9 +89,7 @@ def create_epoch_callback(
         boardpath_params: BoardPathParameters,
         bdh_params: BDHParameters,
         bdh_train_params: BDHTrainParameters,
-        path: str,
-        # val_loader: DataLoader,
-        # device: torch.device
+        path: str
 ):
     best_val_loss = math.inf
 
@@ -192,38 +186,36 @@ def run_inference(path: str):
     print("\nGenerating visualizations...")
     from visualize import (
         visualize_output_frames,
-        visualize_x_frames,
-        visualize_synapse_frames,
         visualize_graph_activations,
-        get_parameter_topology,
         combine_gifs_side_by_side
     )
 
+    # Board predictions
+    print("\n  1/4: Board predictions through layers")
     visualize_output_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size,
         save_path='output_predictions.gif',
-        duration=170,  # Match interpolated duration
-        interpolate_frames=1  # Match graph interpolation
+        duration=170,
+        interpolate_frames=1
     )
 
-    visualize_x_frames(
+    # E @ Dx (communication) - hub only (with interpolation)
+    print("\n  2/4: E @ Dx (communication) - Hub only")
+    visualize_graph_activations(
         x_frames=x_frames,
-        save_path='neuron_activations.gif',
-        duration=500
-    )
-
-    visualize_synapse_frames(
         synapse_frames=synapse_frames,
-        save_path='synapse_matrix.gif',
-        duration=500
+        model=bdh,
+        save_path='graph_e_dx_hub.gif',
+        top_k_edges=5000,
+        duration=170,
+        topology_type='e_dx',
+        hub_only=True,
+        interpolate_frames=1
     )
 
-    # Generate graph visualizations (2 topologies × 2 modes = 4 variants)
-    print("\n  Creating graph visualizations...")
-
-    # 1. E @ Dx (communication) - Full
-    print("\n    1/4: E @ Dx (communication) - Full view")
+    # E @ Dx (communication) - full view
+    print("\n  3/4: E @ Dx (communication) - Full view")
     visualize_graph_activations(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
@@ -235,49 +227,8 @@ def run_inference(path: str):
         hub_only=False
     )
 
-    # 2. E @ Dx (communication) - Hub only (with interpolation)
-    print("\n    2/4: E @ Dx (communication) - Hub only (smooth)")
-    visualize_graph_activations(
-        x_frames=x_frames,
-        synapse_frames=synapse_frames,
-        model=bdh,
-        save_path='graph_e_dx_hub.gif',
-        top_k_edges=5000,
-        duration=170,  # Shorter duration for smoother animation
-        topology_type='e_dx',
-        hub_only=True,
-        interpolate_frames=1  # 3x interpolation for smooth transitions
-    )
-
-    # 3. Dx.T @ Dx (co-activation) - Full
-    print("\n    3/4: Dx.T @ Dx (co-activation) - Full view")
-    visualize_graph_activations(
-        x_frames=x_frames,
-        synapse_frames=synapse_frames,
-        model=bdh,
-        save_path='graph_dx_coact_full.gif',
-        top_k_edges=5000,
-        duration=500,
-        topology_type='dx_coact',
-        hub_only=False
-    )
-
-    # 4. Dx.T @ Dx (co-activation) - Hub only (with interpolation)
-    print("\n    4/4: Dx.T @ Dx (co-activation) - Hub only (smooth)")
-    visualize_graph_activations(
-        x_frames=x_frames,
-        synapse_frames=synapse_frames,
-        model=bdh,
-        save_path='graph_dx_coact_hub.gif',
-        top_k_edges=5000,
-        duration=170,  # Shorter duration for smoother animation
-        topology_type='dx_coact',
-        hub_only=True,
-        interpolate_frames=1  # 3x interpolation for smooth transitions
-    )
-
-    # Create side-by-side combined visualization
-    print("\n  Creating combined visualization (board + network)...")
+    # Combined visualization (board + hub graph)
+    print("\n  4/4: Combined visualization (board + network)")
     combine_gifs_side_by_side(
         left_gif_path='output_predictions.gif',
         right_gif_path='graph_e_dx_hub.gif',
@@ -287,13 +238,9 @@ def run_inference(path: str):
 
     print("\nVisualization files generated:")
     print("  - output_predictions.gif")
-    print("  - neuron_activations.gif")
-    print("  - synapse_matrix.gif")
-    print("  - graph_e_dx_full.gif (E@Dx communication, all neurons)")
-    print("  - graph_e_dx_hub.gif (E@Dx communication, hub only, 5x interpolated)")
-    print("  - graph_dx_coact_full.gif (Dx.T@Dx co-activation, all neurons)")
-    print("  - graph_dx_coact_hub.gif (Dx.T@Dx co-activation, hub only, 3x interpolated)")
-    print("  - combined_board_network.gif (board + E@Dx hub, side-by-side)")
+    print("  - graph_e_dx_hub.gif")
+    print("  - graph_e_dx_full.gif")
+    print("  - combined_board_network.gif")
     print()
 
 def set_all_seeds(seed: int):
