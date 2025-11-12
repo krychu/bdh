@@ -52,8 +52,6 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
     return boardpath_params, bdh_params, bdh_train_params
 
 def get_device():
-    return torch.device("cpu")
-
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
