@@ -5,7 +5,7 @@ from PIL import Image
 import torch
 from typing import List, Optional
 import networkx as nx
-from datasets.build_boardpath_dataset import FLOOR, WALL, START, END, PATH
+from utils.build_boardpath_dataset import FLOOR, WALL, START, END, PATH
 
 # ============================================================================
 # Helper Functions for Frame Management

@@ -1,17 +1,13 @@
 from dataclasses import dataclass
-from typing import Tuple, List
+from typing import List
 import math
-import time
-import random
-from collections import deque
 import torch.nn.functional as F
 import torch
 from torch import nn
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 @dataclass
 class BDHParameters:
-    # Architecture
     V: int  # vocabulary size
     T: int  # tokens (sequence length)
     H: int  # heads
@@ -19,7 +15,6 @@ class BDHParameters:
     D: int  # latent dimension
     L: int  # layers
 
-    # Training/regularization
     dropout: float
     use_rope: bool
     use_abs_pos: bool

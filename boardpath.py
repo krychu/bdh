@@ -1,9 +1,10 @@
 import argparse
 import math
 import random
+from typing import Tuple
 from dataclasses import asdict
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-from datasets.build_boardpath_dataset import *
+from torch.utils.data import DataLoader
+from utils.build_boardpath_dataset import *
 from bdh import *
 
 def get_loaders(boardpath_params: BoardPathParameters, batch_size: int) -> Tuple[DataLoader, DataLoader]:
@@ -184,7 +185,7 @@ def run_inference(path: str):
 
     # Generate visualizations
     print("\nGenerating visualizations...")
-    from visualize import (
+    from utils.visualize import (
         generate_board_frames,
         generate_graph_frames,
         combine_image_lists,
