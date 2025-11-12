@@ -202,7 +202,7 @@ def run_inference(path: str):
     )
 
     # E @ Dx (communication) - hub only (with interpolation)
-    print("\nE @ Dx (communication) - Hub only")
+    print("\nE @ Dx (communication) - hub only")
     print("---------------------------------")
     visualize_graph_activations(
         x_frames=x_frames,
@@ -217,7 +217,7 @@ def run_inference(path: str):
     )
 
     # E @ Dx (communication) - full view
-    print("\nE @ Dx (communication) - Full view")
+    print("\nE @ Dx (communication) - full view")
     print("----------------------------------")
     visualize_graph_activations(
         x_frames=x_frames,

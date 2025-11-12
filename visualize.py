@@ -360,45 +360,38 @@ def visualize_graph_activations(
             edgecolors='none'
         )
 
-        title_mode = " (Hub Only)" if hub_only else ""
         # Show fractional layer index if interpolated
         if interpolate_frames > 1:
             layer_display = f"{layer_idx / interpolate_frames:.2f}"
         else:
             layer_display = str(layer_idx)
-        ax.set_title(f'Layer {layer_display} - {topology_desc}{title_mode}',
-                     fontsize=16, fontweight='bold')
+
+        # Build title: topology (mode) - layer: X
+        title = f'{topology_desc}'
+        if hub_only:
+            title += ' (hub only)'
+        title += f' - layer: {layer_display}'
+
+        ax.set_title(title, fontsize=16, fontweight='bold')
         ax.axis('off')
 
-        # Add legend explaining the color scheme
-        legend_text = (
-            'Color Encoding:\n'
-            f'  Structure: {topology_desc}\n'
-            '  Activation: Synapse strength (edges)\n'
-            '              Neuron activity (nodes)\n\n'
-            'Gray → Red:\n'
-            '  Light gray = Inactive\n'
-            '  Bright red = Active'
-        )
+        # Add combined legend and stats (bottom left)
+        active_neurons = (activations > 0.1 * activations.max()).sum() if activations.max() > 0 else 0
+        active_synapses = (edge_activations > 0.1 * edge_activations.max()).sum() if edge_activations.max() > 0 else 0
+
+        legend_text = 'Color: Inactive (gray) → Active (red)\n'
+
+        if hub_only:
+            legend_text += f'Hub neurons: {N_viz}/{N}\n'
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
+        else:
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
+        legend_text += f'Active edges: {active_synapses}/{edge_count}'
+
         ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
                 fontsize=10, verticalalignment='bottom',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
                 family='monospace')
-
-        # Add stats
-        active_neurons = (activations > 0.1 * activations.max()).sum() if activations.max() > 0 else 0
-        active_synapses = (edge_activations > 0.1 * edge_activations.max()).sum() if edge_activations.max() > 0 else 0
-
-        if hub_only:
-            stats_text = f'Hub neurons: {N_viz}/{N}\n'
-            stats_text += f'Active neurons: {active_neurons}/{N_viz}\n'
-        else:
-            stats_text = f'Active neurons: {active_neurons}/{N_viz}\n'
-        stats_text += f'Active edges: {active_synapses}/{edge_count}\n'
-        stats_text += f'Total edges: {edge_count:,}'
-        ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                fontsize=12, verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
 
         plt.tight_layout()
 
