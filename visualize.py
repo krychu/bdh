@@ -90,8 +90,8 @@ def visualize_output_frames(
         ax.set_xticks([])
         ax.set_yticks([])
 
-        # Add title
-        ax.set_title(f'Layer {layer_idx} Predictions', fontsize=18, fontweight='bold', pad=20)
+        # Add title (match graph visualization format)
+        ax.set_title(f'Predictions - layer: {layer_idx}', fontsize=18, fontweight='bold', pad=20)
 
         # Add legend
         legend_elements = [
