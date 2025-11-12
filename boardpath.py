@@ -191,7 +191,8 @@ def run_inference(path: str):
     )
 
     # Board predictions
-    print("\n  1/4: Board predictions through layers")
+    print("\nBoard predictions through layers")
+    print("--------------------------------")
     visualize_output_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size,
@@ -201,7 +202,8 @@ def run_inference(path: str):
     )
 
     # E @ Dx (communication) - hub only (with interpolation)
-    print("\n  2/4: E @ Dx (communication) - Hub only")
+    print("\nE @ Dx (communication) - Hub only")
+    print("---------------------------------")
     visualize_graph_activations(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
@@ -215,7 +217,8 @@ def run_inference(path: str):
     )
 
     # E @ Dx (communication) - full view
-    print("\n  3/4: E @ Dx (communication) - Full view")
+    print("\nE @ Dx (communication) - Full view")
+    print("----------------------------------")
     visualize_graph_activations(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
@@ -228,20 +231,14 @@ def run_inference(path: str):
     )
 
     # Combined visualization (board + hub graph)
-    print("\n  4/4: Combined visualization (board + network)")
+    print("\nCombined visualization (board + network)")
+    print("----------------------------------------")
     combine_gifs_side_by_side(
         left_gif_path='output_predictions.gif',
         right_gif_path='graph_e_dx_hub.gif',
         output_path='combined_board_network.gif',
         spacing=20
     )
-
-    print("\nVisualization files generated:")
-    print("  - output_predictions.gif")
-    print("  - graph_e_dx_hub.gif")
-    print("  - graph_e_dx_full.gif")
-    print("  - combined_board_network.gif")
-    print()
 
 def set_all_seeds(seed: int):
     torch.manual_seed(seed)
@@ -274,13 +271,14 @@ if __name__ == '__main__':
                         help="Model file path (default: boardpath.pt)")
     args = parser.parse_args()
 
+    if args.seed:
+        seed = int(args.seed)
+        set_all_seeds(seed) # 1337
+        print(f"seed: {seed}")
+    else:
+        print("seed: random")
+
     if args.mode == "train":
-        if args.seed:
-            seed = int(args.seed)
-            set_all_seeds(seed) # 1337
-            print(f"seed: {seed}")
-        else:
-            print("seed: random")
         run_training()
     elif args.mode == "inference":
         run_inference(args.model)
