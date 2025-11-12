@@ -185,60 +185,67 @@ def run_inference(path: str):
     # Generate visualizations
     print("\nGenerating visualizations...")
     from visualize import (
-        visualize_output_frames,
-        visualize_graph_activations,
-        combine_gifs_side_by_side
+        generate_board_frames,
+        generate_graph_frames,
+        combine_image_lists,
+        save_gif
     )
 
-    # Board predictions
-    print("\nBoard predictions through layers")
-    print("--------------------------------")
-    visualize_output_frames(
+    # 1. Generate board prediction frames
+    print("\n  1/5: Generating board predictions...")
+    board_images = generate_board_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size,
-        save_path='output_predictions.gif',
-        duration=170,
         interpolate_frames=1
     )
 
-    # E @ Dx (communication) - hub only (with interpolation)
-    print("\nE @ Dx (communication) - hub only")
-    print("---------------------------------")
-    visualize_graph_activations(
+    # 2. Generate hub graph frames
+    print("\n  2/5: Generating E @ Dx (communication) - Hub only...")
+    hub_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
-        save_path='graph_e_dx_hub.gif',
         top_k_edges=5000,
-        duration=170,
         topology_type='e_dx',
         hub_only=True,
         interpolate_frames=1
     )
 
-    # E @ Dx (communication) - full view
-    print("\nE @ Dx (communication) - full view")
-    print("----------------------------------")
-    visualize_graph_activations(
+    # 3. Generate full graph frames
+    print("\n  3/5: Generating E @ Dx (communication) - Full view...")
+    full_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
-        save_path='graph_e_dx_full.gif',
         top_k_edges=5000,
-        duration=500,
         topology_type='e_dx',
         hub_only=False
     )
 
-    # Combined visualization (board + hub graph)
-    print("\nCombined visualization (board + network)")
-    print("----------------------------------------")
-    combine_gifs_side_by_side(
-        left_gif_path='output_predictions.gif',
-        right_gif_path='graph_e_dx_hub.gif',
-        output_path='combined_board_network.gif',
-        spacing=20
-    )
+    # 4. Save individual GIFs
+    print("\n  4/5: Saving individual GIFs...")
+    save_gif(board_images, 'output_predictions.gif', duration=170)
+    save_gif(hub_images, 'graph_e_dx_hub.gif', duration=170)
+    save_gif(full_images, 'graph_e_dx_full.gif', duration=500)
+
+    # 5. Create and save combined visualizations
+    print("\n  5/5: Creating combined visualizations...")
+
+    # Two-way: board + hub
+    combined_2way = combine_image_lists([board_images, hub_images], spacing=20)
+    save_gif(combined_2way, 'combined_board_hub.gif', duration=170)
+
+    # Three-way: board + hub + full
+    combined_3way = combine_image_lists([board_images, hub_images, full_images], spacing=20)
+    save_gif(combined_3way, 'combined_board_hub_full.gif', duration=170)
+
+    print("\n✓ Visualization files generated:")
+    print("  - output_predictions.gif")
+    print("  - graph_e_dx_hub.gif")
+    print("  - graph_e_dx_full.gif")
+    print("  - combined_board_hub.gif (board + hub)")
+    print("  - combined_board_hub_full.gif (board + hub + full)")
+    print()
 
 def set_all_seeds(seed: int):
     torch.manual_seed(seed)

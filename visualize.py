@@ -7,6 +7,105 @@ from typing import List, Optional
 import networkx as nx
 from datasets.build_boardpath_dataset import FLOOR, WALL, START, END, PATH
 
+# ============================================================================
+# Helper Functions for Frame Management
+# ============================================================================
+
+def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
+    """
+    Save a list of PIL images as an animated GIF.
+
+    Args:
+        images: List of PIL Image objects
+        save_path: Path to save the GIF
+        duration: Duration of each frame in milliseconds
+    """
+    if not images:
+        raise ValueError("Cannot save empty image list")
+
+    images[0].save(
+        save_path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration,
+        loop=0,
+        optimize=False
+    )
+    print(f"Saved GIF to: {save_path}")
+    print(f"  Frames: {len(images)}")
+    print(f"  Duration per frame: {duration}ms")
+
+def combine_image_lists(
+    image_lists: List[List[Image.Image]],
+    spacing: int = 20
+) -> List[Image.Image]:
+    """
+    Combine multiple lists of images horizontally into a single list.
+
+    Args:
+        image_lists: List of image lists to combine (e.g., [[board_imgs], [hub_imgs], [full_imgs]])
+        spacing: Pixels of white space between images (default: 20)
+
+    Returns:
+        List of combined PIL images
+    """
+    if not image_lists or not all(image_lists):
+        raise ValueError("All image lists must be non-empty")
+
+    # Handle frame count mismatch by repeating last frame
+    max_frames = max(len(imgs) for imgs in image_lists)
+
+    # Extend shorter lists by repeating last frame
+    extended_lists = []
+    for imgs in image_lists:
+        extended = imgs.copy()
+        while len(extended) < max_frames:
+            extended.append(extended[-1].copy())
+        extended_lists.append(extended)
+
+    # Get dimensions of each image list
+    widths = [imgs[0].size[0] for imgs in extended_lists]
+    heights = [imgs[0].size[1] for imgs in extended_lists]
+
+    # Calculate combined dimensions
+    combined_width = sum(widths) + spacing * (len(widths) - 1)
+    combined_height = max(heights)
+
+    print(f"Combining {len(image_lists)} image lists horizontally:")
+    print(f"  Frame counts: {[len(imgs) for imgs in image_lists]}")
+    print(f"  Individual sizes: {list(zip(widths, heights))}")
+    print(f"  Combined size: {combined_width}×{combined_height}")
+    print(f"  Total frames: {max_frames}")
+
+    # Create combined frames
+    combined_frames = []
+    for frame_idx in range(max_frames):
+        # Create white background
+        combined = Image.new('RGB', (combined_width, combined_height), 'white')
+
+        # Paste each image horizontally
+        x_offset = 0
+        for img_list, width, height in zip(extended_lists, widths, heights):
+            frame = img_list[frame_idx]
+
+            # Convert to RGB if needed
+            if frame.mode != 'RGB':
+                frame = frame.convert('RGB')
+
+            # Center vertically
+            y_offset = (combined_height - height) // 2
+            combined.paste(frame, (x_offset, y_offset))
+
+            x_offset += width + spacing
+
+        combined_frames.append(combined)
+
+    return combined_frames
+
+# ============================================================================
+# Topology Extraction
+# ============================================================================
+
 def get_parameter_topology(model, topology_type: str = 'e_dx') -> torch.Tensor:
     """
     Extract N×N topology from model parameters.
@@ -41,22 +140,21 @@ def get_parameter_topology(model, topology_type: str = 'e_dx') -> torch.Tensor:
     return topology.abs().detach()
 
 
-def visualize_output_frames(
+def generate_board_frames(
     output_frames: List[torch.Tensor],
     board_size: int,
-    save_path: str,
-    duration: int = 500,
     interpolate_frames: int = 1
-):
+) -> List[Image.Image]:
     """
-    Create animated GIF of board predictions through layers.
+    Generate PIL images of board predictions through layers.
 
     Args:
         output_frames: List of tensors, each shape (T,) with predicted tokens
         board_size: Size of the board (e.g., 8 for 8x8)
-        save_path: Path to save the GIF (e.g., 'output_predictions.gif')
-        duration: Duration of each frame in milliseconds (default: 500ms)
         interpolate_frames: Number of frames between layers (1=no interpolation, simply repeat each frame)
+
+    Returns:
+        List of PIL Image objects
     """
     # Interpolate frames by repeating each frame
     if interpolate_frames > 1:
@@ -116,34 +214,21 @@ def visualize_output_frames(
         plt.close(fig)
         buf.close()
 
-    # Save as GIF
-    images[0].save(
-        save_path,
-        save_all=True,
-        append_images=images[1:],
-        duration=duration,
-        loop=0,
-        optimize=False
-    )
-    print(f"Saved animated GIF to: {save_path}")
-    print(f"  Frames: {len(images)}")
-    print(f"  Duration per frame: {duration}ms")
+    return images
 
 
-def visualize_graph_activations(
+def generate_graph_frames(
     x_frames: List[torch.Tensor],
     synapse_frames: List[torch.Tensor],
-    save_path: str,
     model,
     top_k_edges: int = 5000,
-    duration: int = 500,
     layout_seed: int = 42,
     topology_type: str = 'e_dx',
     hub_only: bool = False,
     interpolate_frames: int = 1
-):
+) -> List[Image.Image]:
     """
-    Create animated GIF with dual-layer color encoding:
+    Generate PIL images with dual-layer color encoding:
 
     - Graph structure (layout): Topology matrix (E @ Dx or Dx.T @ Dx)
     - Edge base color (gray): Structural weight (always visible if > threshold)
@@ -406,125 +491,4 @@ def visualize_graph_activations(
 
         print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
 
-    # Save as GIF
-    images[0].save(
-        save_path,
-        save_all=True,
-        append_images=images[1:],
-        duration=duration,
-        loop=0,
-        optimize=False
-    )
-    print(f"Saved graph activation GIF to: {save_path}")
-    print(f"  Frames: {len(images)}")
-    print(f"  Duration per frame: {duration}ms")
-
-def combine_gifs_side_by_side(
-    left_gif_path: str,
-    right_gif_path: str,
-    output_path: str,
-    spacing: int = 20
-):
-    """
-    Combine two GIFs side by side into a single GIF.
-
-    Args:
-        left_gif_path: Path to left GIF
-        right_gif_path: Path to right GIF
-        output_path: Path to save combined GIF
-        spacing: Pixels of white space between GIFs (default: 20)
-    """
-    print(f"Combining GIFs side by side...")
-    print(f"  Left: {left_gif_path}")
-    print(f"  Right: {right_gif_path}")
-
-    # Open both GIFs
-    left_gif = Image.open(left_gif_path)
-    right_gif = Image.open(right_gif_path)
-
-    # Get frame counts
-    left_frames = []
-    right_frames = []
-
-    # Extract all frames from left GIF
-    try:
-        while True:
-            left_frames.append(left_gif.copy())
-            left_gif.seek(left_gif.tell() + 1)
-    except EOFError:
-        pass
-
-    # Extract all frames from right GIF
-    try:
-        while True:
-            right_frames.append(right_gif.copy())
-            right_gif.seek(right_gif.tell() + 1)
-    except EOFError:
-        pass
-
-    print(f"  Left frames: {len(left_frames)}")
-    print(f"  Right frames: {len(right_frames)}")
-
-    # Handle frame count mismatch by repeating frames
-    if len(left_frames) != len(right_frames):
-        print(f"  Warning: Frame count mismatch, interpolating...")
-        max_frames = max(len(left_frames), len(right_frames))
-
-        # Repeat last frame if needed
-        while len(left_frames) < max_frames:
-            left_frames.append(left_frames[-1].copy())
-        while len(right_frames) < max_frames:
-            right_frames.append(right_frames[-1].copy())
-
-    # Get dimensions
-    left_width, left_height = left_frames[0].size
-    right_width, right_height = right_frames[0].size
-
-    # Calculate combined dimensions
-    combined_width = left_width + spacing + right_width
-    combined_height = max(left_height, right_height)
-
-    print(f"  Combined size: {combined_width}×{combined_height}")
-
-    # Create combined frames
-    combined_frames = []
-    for left_frame, right_frame in zip(left_frames, right_frames):
-        # Create white background
-        combined = Image.new('RGB', (combined_width, combined_height), 'white')
-
-        # Convert frames to RGB if needed
-        if left_frame.mode != 'RGB':
-            left_frame = left_frame.convert('RGB')
-        if right_frame.mode != 'RGB':
-            right_frame = right_frame.convert('RGB')
-
-        # Paste left frame (centered vertically)
-        left_y = (combined_height - left_height) // 2
-        combined.paste(left_frame, (0, left_y))
-
-        # Paste right frame (centered vertically)
-        right_y = (combined_height - right_height) // 2
-        combined.paste(right_frame, (left_width + spacing, right_y))
-
-        combined_frames.append(combined)
-
-    # Get duration from original GIF (try to extract from info)
-    try:
-        duration = left_gif.info.get('duration', 500)
-    except:
-        duration = 500
-
-    # Save combined GIF
-    combined_frames[0].save(
-        output_path,
-        save_all=True,
-        append_images=combined_frames[1:],
-        duration=duration,
-        loop=0,
-        optimize=False
-    )
-
-    print(f"Saved combined GIF to: {output_path}")
-    print(f"  Frames: {len(combined_frames)}")
-    print(f"  Duration per frame: {duration}ms")
-
+    return images
