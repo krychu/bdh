@@ -1,5 +1,4 @@
 import argparse
-import math
 import random
 from typing import Tuple
 from dataclasses import asdict
@@ -90,7 +89,7 @@ def create_epoch_callback(
         bdh_train_params: BDHTrainParameters,
         path: str
 ):
-    best_val_acc_samples = math.inf
+    best_val_acc_samples = 0
 
     def epoch_callback(
             bdh: BDH,
@@ -119,7 +118,7 @@ def create_epoch_callback(
 
         mark = "" if val_acc_samples <= best_val_acc_samples else "*"
         if epoch_idx==-1:
-            best_val_loss = math.inf
+            best_val_acc_samples = 0
             print(f"epoch: --- [trn] loss: ------ [val] loss: {val_loss:.4f}, cell acc/acc4x: {val_acc_tokens:.3f}/{val_acc_tokens_4x:.3f}, board acc/acc4x: {val_acc_samples:.3f}/{val_acc_samples_4x:.3f}")
         else:
             print(f"epoch: {epoch_idx+1:03d} [trn] loss: {epoch_loss:.4f} [val] loss: {val_loss:.4f}, cell acc/acc4x: {val_acc_tokens:.3f}/{val_acc_tokens_4x:.3f}, board acc/acc4x: {val_acc_samples:.3f}/{val_acc_samples_4x:.3f} (time: {epoch_time:.0f}s) {mark}")
