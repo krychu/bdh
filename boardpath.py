@@ -52,8 +52,6 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
     return boardpath_params, bdh_params, bdh_train_params
 
 def get_device():
-    return torch.device("cpu")
-
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -92,7 +90,7 @@ def create_epoch_callback(
         bdh_train_params: BDHTrainParameters,
         path: str
 ):
-    best_val_loss = math.inf
+    best_val_acc_samples = math.inf
 
     def epoch_callback(
             bdh: BDH,
@@ -103,7 +101,7 @@ def create_epoch_callback(
             ce_loss: nn.Module,
             device: torch.device
     ) -> None:
-        nonlocal best_val_loss
+        nonlocal best_val_acc_samples
         val_loss, val_acc_tokens, val_acc_samples = evaluate(
             bdh=bdh,
             ce_loss=ce_loss,
@@ -111,21 +109,31 @@ def create_epoch_callback(
             device=device
         )
 
+        _, val_acc_tokens_4x, val_acc_samples_4x = evaluate(
+            bdh=bdh,
+            ce_loss=ce_loss,
+            loader=val_loader,
+            device=device,
+            L_override=bdh_params.L * 4
+        )
+
+        mark = "" if val_acc_samples <= best_val_acc_samples else "*"
         if epoch_idx==-1:
             best_val_loss = math.inf
-            print(f"epoch: --- [trn] loss: ------ [val] loss: {val_loss:.4f}, cell acc: {val_acc_tokens:.3f}, board acc: {val_acc_samples:.3f}")
+            print(f"epoch: --- [trn] loss: ------ [val] loss: {val_loss:.4f}, cell acc/acc4x: {val_acc_tokens:.3f}/{val_acc_tokens_4x:.3f}, board acc/acc4x: {val_acc_samples:.3f}/{val_acc_samples_4x:.3f}")
         else:
-            print(f"epoch: {epoch_idx+1:03d} [trn] loss: {epoch_loss:.4f} [val] loss: {val_loss:.4f}, cell acc: {val_acc_tokens:.3f}, board acc: {val_acc_samples:.3f} (time: {epoch_time:.0f}s)")
+            print(f"epoch: {epoch_idx+1:03d} [trn] loss: {epoch_loss:.4f} [val] loss: {val_loss:.4f}, cell acc/acc4x: {val_acc_tokens:.3f}/{val_acc_tokens_4x:.3f}, board acc/acc4x: {val_acc_samples:.3f}/{val_acc_samples_4x:.3f} (time: {epoch_time:.0f}s) {mark}")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            save_bdh(
-                bdh=bdh,
-                boardpath_params=boardpath_params,
-                bdh_params=bdh_params,
-                bdh_train_params=bdh_train_params,
-                path=path
-            )
+        if val_acc_samples > best_val_acc_samples:
+            best_val_acc_samples = val_acc_samples
+            if epoch_idx != -1:
+                save_bdh(
+                    bdh=bdh,
+                    boardpath_params=boardpath_params,
+                    bdh_params=bdh_params,
+                    bdh_train_params=bdh_train_params,
+                    path=path
+                )
 
     return epoch_callback
 

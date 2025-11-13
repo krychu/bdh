@@ -112,11 +112,11 @@ def boardpath_summary(params: BoardPathParameters) -> None:
     print("BoardPath Dataset Parameters:")
     print("-" * 31)
     print(f"{'board_size':<20} {params.board_size:>10}")
-    print(f"{'T (tokens)':<20} {params.board_size * params.board_size:>10}")
-    print(f"{'train_count':<20} {params.train_count:>10}")
-    print(f"{'val_count':<20} {params.val_count:>10}")
+    print(f"{'cell_cnt (T)':<20} {params.board_size ** 2:>10}")
+    print(f"{'cell types (V)':<20} {get_vocab_cnt():>10}")
     print(f"{'wall_prob':<20} {params.wall_prob:>10}")
-    print(f"{'V (vocab)':<20} {get_vocab_cnt():>10}")
+    print(f"{'train_cnt':<20} {params.train_count:>10}")
+    print(f"{'val_cnt':<20} {params.val_count:>10}")
     print()
 
 if __name__ == '__main__':

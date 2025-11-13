@@ -72,7 +72,7 @@ class BDH(nn.Module):
             # scale by 1/sqrt(L) since we add positional embeddings L times
             nn.init.normal_(self.pos.weight, mean=0.0, std=1.0/math.sqrt(L))
 
-    def forward(self, input_, capture_frames = False):
+    def forward(self, input_, capture_frames = False, L_override: int | None = None):
         B, T = input_.size()
 
         # BT -> B1TD
@@ -87,7 +87,10 @@ class BDH(nn.Module):
             x_frames: List[torch.Tensor] = []
             synapse_frames: List[torch.Tensor] = []
 
-        for _ in range(self.L):
+        L = self.L
+        if L_override is not None:
+            L = L_override
+        for _ in range(L):
             if self.use_abs_pos:
                 # B1TD + TD -> B1TD
                 v_ast = v_ast + abs_pos_ast
@@ -228,7 +231,8 @@ def evaluate(
         bdh: BDH,
         ce_loss: nn.Module,
         loader: DataLoader,
-        device: torch.device
+        device: torch.device,
+        L_override: int | None = None
 ):
     bdh.eval()
 
@@ -244,7 +248,7 @@ def evaluate(
         y_bs = y_bs.to(device)
         B, S = x_bs.shape
 
-        logits = bdh(x_bs) # BTV
+        logits = bdh(x_bs, L_override=L_override) # BTV
         loss = ce_loss(logits.transpose(1,2), y_bs)
         total_loss += loss.item() * B * S
         total_loss_tokens += B * S
