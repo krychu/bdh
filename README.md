@@ -1,6 +1,9 @@
 # The Dragon Hatchling (BDH)
 
-This repository contains an educational PyTorch implementation of the **BDH-GPU architecture** proposed in the paper **["The Dragon Hatchling: The Missing Link between the Transformer and Models of the Brain"](https://arxiv.org/abs/2509.26507)**.
+This repository contains an educational PyTorch implementation of the BDH-GPU architecture proposed in the paper:
+
+> *A. Kosowski, P. Uznański, J. Chorowski, Z. Stamirowska, M. Bartoszkiewicz.*
+> [_The Dragon Hatchling: The Missing Link between the Transformer and Models of the Brain_](https://doi.org/10.48550/arXiv.2509.26507), arXiv (2025).
 
 BDH is a novel Large Language Model architecture based on a scale-free, biologically-inspired network of locally-interacting neurons. It aims to bridge the gap between the tensor-based operations of modern Transformers and the graph-based, distributed dynamics of the human brain.
 
