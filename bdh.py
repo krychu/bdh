@@ -94,8 +94,6 @@ class BDH(nn.Module):
                 v_ast = v_ast + abs_pos_ast
 
             # B1TD @ HDNh -> BHTNh
-            x = F.relu(v_ast @ self.Dx)
-
             if x is None:
                 x = F.relu(v_ast @ self.Dx)
             else:

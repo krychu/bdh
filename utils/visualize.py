@@ -238,7 +238,7 @@ def generate_board_frames(
     return images
 
 
-def generate_graph_frames(
+def generate_graph_frames_structural(
     x_frames: List[torch.Tensor],
     synapse_frames: List[torch.Tensor],
     model,
@@ -249,7 +249,7 @@ def generate_graph_frames(
     interpolate_frames: int = 1
 ) -> List[Image.Image]:
     """
-    Generate PIL images with dual-layer color encoding:
+    Generate PIL images with dual-layer color encoding based on structural topology.
 
     - Graph structure (layout): Topology matrix (E @ Dx or Dx.T @ Dx)
     - Edge base color (gray): Structural weight (always visible if > threshold)
@@ -260,10 +260,8 @@ def generate_graph_frames(
     Args:
         x_frames: List of L tensors, each shape (N,) with neuron activations per layer
         synapse_frames: List of L tensors, each shape (N, N) with synapse values per layer
-        save_path: Path to save the GIF (e.g., 'graph_activations.gif')
         model: BDH model (to extract topology)
         top_k_edges: Number of strongest connections to include in graph (default: 5000)
-        duration: Duration of each frame in milliseconds (default: 500ms)
         layout_seed: Random seed for reproducible layout (default: 42)
         topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
         hub_only: If True, show only connected neurons (zoomed view)
@@ -515,4 +513,526 @@ def generate_graph_frames(
 
         print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
 
+    return images
+
+
+def generate_graph_frames_dynamic(
+    x_frames: List[torch.Tensor],
+    synapse_frames: List[torch.Tensor],
+    top_k_edges: int = 5000,
+    layout_seed: int = 42,
+    hub_only: bool = False,
+    interpolate_frames: int = 1,
+    activation_threshold_percentile: float = 0.1
+) -> List[Image.Image]:
+    """
+    Generate PIL images based purely on dynamic co-activation patterns.
+    
+    Graph structure is determined by edges that are strongly active in at least one layer.
+    No structural topology (E @ Dx) is used.
+    
+    Args:
+        x_frames: List of L tensors, each shape (N,) with neuron activations per layer
+        synapse_frames: List of L tensors, each shape (N, N) with synapse values per layer
+        top_k_edges: Number of strongest dynamic connections to include (default: 5000)
+        layout_seed: Random seed for reproducible layout (default: 42)
+        hub_only: If True, show only connected neurons (zoomed view)
+        interpolate_frames: Number of interpolated frames between layers
+        activation_threshold_percentile: Edges active above this percentile in any layer are included
+    
+    Returns:
+        List of PIL Image objects
+    """
+    import io
+    from matplotlib.colors import Normalize
+    
+    N = synapse_frames[0].shape[0]
+    L = len(synapse_frames)
+    
+    print(f"Building dynamic graph from {L} layers with {N} neurons...")
+    print(f"Using max-per-edge criterion (active in any layer)")
+    
+    # Compute max activation per edge across all layers
+    synapse_stack = torch.stack(synapse_frames, dim=0)  # (L, N, N)
+    max_per_edge = synapse_stack.max(dim=0)[0]  # (N, N)
+    max_per_edge_np = max_per_edge.cpu().numpy()
+    
+    # Get top-K edges based on max activation
+    flat_max = max_per_edge_np.flatten()
+    threshold = np.partition(flat_max, -top_k_edges)[-top_k_edges]
+    
+    print(f"Edge threshold: {threshold:.6f}")
+    
+    # Build graph structure
+    G = nx.Graph()
+    G.add_nodes_from(range(N))
+    
+    edge_list = []
+    edge_weights_max = []
+    
+    for i in range(N):
+        for j in range(i+1, N):
+            weight = (max_per_edge_np[i, j] + max_per_edge_np[j, i]) / 2
+            if weight >= threshold:
+                G.add_edge(i, j)
+                edge_list.append((i, j))
+                edge_weights_max.append(weight)
+    
+    edge_weights_max = np.array(edge_weights_max)
+    edge_count = len(edge_list)
+    
+    # Identify connected neurons
+    connected_neurons = set()
+    for i, j in edge_list:
+        connected_neurons.add(i)
+        connected_neurons.add(j)
+    connected_neurons = sorted(connected_neurons)
+    
+    print(f"Graph built: {N} nodes, {edge_count} edges")
+    print(f"Connected neurons: {len(connected_neurons)} ({len(connected_neurons)/N*100:.1f}%)")
+    
+    # Handle hub-only mode
+    if hub_only:
+        neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
+        
+        G_hub = nx.Graph()
+        G_hub.add_nodes_from(range(len(connected_neurons)))
+        
+        edge_list_hub = []
+        for i, j in edge_list:
+            G_hub.add_edge(neuron_map[i], neuron_map[j])
+            edge_list_hub.append((neuron_map[i], neuron_map[j]))
+        
+        G = G_hub
+        edge_list = edge_list_hub
+        N_viz = len(connected_neurons)
+        print(f"Hub-only mode: Using {N_viz} connected neurons")
+    else:
+        N_viz = N
+        neuron_map = None
+    
+    print(f"Computing force-directed layout...")
+    pos = nx.spring_layout(G, k=1/np.sqrt(N_viz), iterations=50, seed=layout_seed)
+    print(f"Layout computed. Creating animation...")
+    
+    # Interpolate frames if requested
+    if interpolate_frames > 1:
+        print(f"Interpolating {interpolate_frames}x frames between layers...")
+        x_frames_interp = []
+        synapse_frames_interp = []
+        
+        for i in range(len(x_frames) - 1):
+            x_frames_interp.append(x_frames[i])
+            synapse_frames_interp.append(synapse_frames[i])
+            
+            for j in range(1, interpolate_frames):
+                alpha = j / interpolate_frames
+                x_interp = (1 - alpha) * x_frames[i] + alpha * x_frames[i + 1]
+                synapse_interp = (1 - alpha) * synapse_frames[i] + alpha * synapse_frames[i + 1]
+                x_frames_interp.append(x_interp)
+                synapse_frames_interp.append(synapse_interp)
+        
+        x_frames_interp.append(x_frames[-1])
+        synapse_frames_interp.append(synapse_frames[-1])
+        
+        x_frames = x_frames_interp
+        synapse_frames = synapse_frames_interp
+        print(f"Total frames after interpolation: {len(x_frames)}")
+    
+    images = []
+    for layer_idx, (x_frame, synapse_frame) in enumerate(zip(x_frames, synapse_frames)):
+        fig, ax = plt.subplots(figsize=(12, 12))
+        
+        activations_full = x_frame.cpu().numpy()
+        synapse_np_full = synapse_frame.cpu().numpy()
+        
+        if hub_only:
+            activations = activations_full[connected_neurons]
+            synapse_np = synapse_np_full[np.ix_(connected_neurons, connected_neurons)]
+        else:
+            activations = activations_full
+            synapse_np = synapse_np_full
+        
+        # Compute edge activations for this layer
+        edge_activations = []
+        for i, j in edge_list:
+            syn_weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
+            edge_activations.append(syn_weight)
+        
+        edge_activations = np.array(edge_activations)
+        
+        # Normalize activations
+        if edge_activations.max() > 0:
+            act_norm = Normalize(vmin=0, vmax=edge_activations.max())
+            edge_activations_norm = act_norm(edge_activations)
+        else:
+            edge_activations_norm = np.zeros_like(edge_activations)
+        
+        # Color: Gray (inactive) → Red (active)
+        edge_colors = []
+        for act_val in edge_activations_norm:
+            base = 0.8  # Light gray
+            r = base + (1 - base) * act_val
+            g = base * (1 - act_val * 0.9)
+            b = base * (1 - act_val * 0.9)
+            edge_colors.append((r, g, b, 0.9))
+        
+        nx.draw_networkx_edges(
+            G, pos, ax=ax,
+            edge_color=edge_colors,
+            width=0.5,
+        )
+        
+        # Node colors
+        if activations.max() > 0:
+            node_norm = Normalize(vmin=0, vmax=activations.max())
+            activations_norm = node_norm(activations)
+        else:
+            activations_norm = np.zeros_like(activations)
+        
+        node_colors = []
+        for act_val in activations_norm:
+            base = 0.85
+            r = base + (1 - base) * act_val
+            g = base * (1 - act_val * 0.8)
+            b = base * (1 - act_val * 0.8)
+            node_colors.append((r, g, b))
+        
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            node_color=node_colors,
+            node_size=20,
+            edgecolors='none'
+        )
+        
+        # Title
+        if interpolate_frames > 1:
+            layer_display = f"{layer_idx / interpolate_frames:.2f}"
+        else:
+            layer_display = str(layer_idx)
+        
+        title = 'Dynamic co-activation'
+        if hub_only:
+            title += ' (hub only)'
+        title += f' - layer: {layer_display}'
+        
+        ax.set_title(title, fontsize=16, fontweight='bold')
+        ax.axis('off')
+        
+        # Stats
+        active_neurons = (activations > 0.1 * activations.max()).sum() if activations.max() > 0 else 0
+        active_edges = (edge_activations > 0.1 * edge_activations.max()).sum() if edge_activations.max() > 0 else 0
+        
+        legend_text = 'Color: Inactive (gray) → Active (red)\n'
+        if hub_only:
+            legend_text += f'Hub neurons: {N_viz}/{N}\n'
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
+        else:
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
+        legend_text += f'Active edges: {active_edges}/{edge_count}'
+        
+        ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
+                fontsize=10, verticalalignment='bottom',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+                family='monospace')
+        
+        add_watermark(fig, ax)
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        image = Image.open(buf).copy()
+        images.append(image)
+        plt.close(fig)
+        buf.close()
+        
+        print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
+    
+    return images
+
+
+def generate_graph_frames_hybrid(
+    x_frames: List[torch.Tensor],
+    synapse_frames: List[torch.Tensor],
+    model,
+    top_k_structural: int = 5000,
+    dynamic_threshold_percentile: float = 0.5,
+    layout_seed: int = 42,
+    topology_type: str = 'e_dx',
+    hub_only: bool = False,
+    interpolate_frames: int = 1
+) -> List[Image.Image]:
+    """
+    Generate PIL images with hybrid visualization:
+    - Gray edges: Structural topology (E @ Dx)
+    - Colored edges: Dynamic co-activation (x.T @ y) - including non-structural pairs
+    
+    Shows both what connections SHOULD exist (structure) and what ACTUALLY activates (dynamics).
+    
+    Args:
+        x_frames: List of L tensors, each shape (N,) with neuron activations per layer
+        synapse_frames: List of L tensors, each shape (N, N) with synapse values per layer
+        model: BDH model (to extract structural topology)
+        top_k_structural: Number of structural edges to show in gray
+        dynamic_threshold_percentile: Show dynamic edges above this percentile (0-1)
+        layout_seed: Random seed for reproducible layout
+        topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
+        hub_only: If True, show only connected neurons
+        interpolate_frames: Number of interpolated frames between layers
+    
+    Returns:
+        List of PIL Image objects
+    """
+    import io
+    from matplotlib.colors import Normalize
+    
+    # Get structural topology
+    topology_matrix = get_parameter_topology(model, topology_type=topology_type)
+    N = topology_matrix.shape[0]
+    
+    topology_desc = {
+        'e_dx': 'E @ Dx (communication)',
+        'dx_coact': 'Dx.T @ Dx (co-activation)'
+    }[topology_type]
+    
+    print(f"Building hybrid graph: {topology_desc} structure + dynamic activation")
+    print(f"Top-{top_k_structural} structural edges (gray)")
+    print(f"Dynamic edges above {dynamic_threshold_percentile*100}% (colored)")
+    
+    topology_np = topology_matrix.cpu().numpy()
+    
+    # Build structural edge list
+    flat_topology = topology_np.flatten()
+    struct_threshold = np.partition(flat_topology, -top_k_structural)[-top_k_structural]
+    
+    structural_edges = []
+    for i in range(N):
+        for j in range(i+1, N):
+            weight = (topology_np[i, j] + topology_np[j, i]) / 2
+            if weight >= struct_threshold:
+                structural_edges.append((i, j))
+    
+    print(f"Structural edges: {len(structural_edges)}")
+    
+    # Build graph for layout (use structural edges)
+    G = nx.Graph()
+    G.add_nodes_from(range(N))
+    for i, j in structural_edges:
+        G.add_edge(i, j)
+    
+    # Identify connected neurons
+    connected_neurons = set()
+    for i, j in structural_edges:
+        connected_neurons.add(i)
+        connected_neurons.add(j)
+    connected_neurons = sorted(connected_neurons)
+    
+    print(f"Connected neurons: {len(connected_neurons)} ({len(connected_neurons)/N*100:.1f}%)")
+    
+    # Handle hub-only mode
+    if hub_only:
+        neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
+        
+        G_hub = nx.Graph()
+        G_hub.add_nodes_from(range(len(connected_neurons)))
+        
+        structural_edges_hub = []
+        for i, j in structural_edges:
+            G_hub.add_edge(neuron_map[i], neuron_map[j])
+            structural_edges_hub.append((neuron_map[i], neuron_map[j]))
+        
+        G = G_hub
+        structural_edges = structural_edges_hub
+        N_viz = len(connected_neurons)
+        print(f"Hub-only mode: Using {N_viz} connected neurons")
+    else:
+        N_viz = N
+        neuron_map = None
+    
+    print(f"Computing force-directed layout...")
+    pos = nx.spring_layout(G, k=1/np.sqrt(N_viz), iterations=50, seed=layout_seed)
+    print(f"Layout computed. Creating animation...")
+    
+    # Interpolate frames if requested
+    if interpolate_frames > 1:
+        print(f"Interpolating {interpolate_frames}x frames between layers...")
+        x_frames_interp = []
+        synapse_frames_interp = []
+        
+        for i in range(len(x_frames) - 1):
+            x_frames_interp.append(x_frames[i])
+            synapse_frames_interp.append(synapse_frames[i])
+            
+            for j in range(1, interpolate_frames):
+                alpha = j / interpolate_frames
+                x_interp = (1 - alpha) * x_frames[i] + alpha * x_frames[i + 1]
+                synapse_interp = (1 - alpha) * synapse_frames[i] + alpha * synapse_frames[i + 1]
+                x_frames_interp.append(x_interp)
+                synapse_frames_interp.append(synapse_interp)
+        
+        x_frames_interp.append(x_frames[-1])
+        synapse_frames_interp.append(synapse_frames[-1])
+        
+        x_frames = x_frames_interp
+        synapse_frames = synapse_frames_interp
+        print(f"Total frames after interpolation: {len(x_frames)}")
+    
+    images = []
+    for layer_idx, (x_frame, synapse_frame) in enumerate(zip(x_frames, synapse_frames)):
+        fig, ax = plt.subplots(figsize=(12, 12))
+        
+        activations_full = x_frame.cpu().numpy()
+        synapse_np_full = synapse_frame.cpu().numpy()
+        
+        if hub_only:
+            activations = activations_full[connected_neurons]
+            synapse_np = synapse_np_full[np.ix_(connected_neurons, connected_neurons)]
+        else:
+            activations = activations_full
+            synapse_np = synapse_np_full
+        
+        # Step 1: Draw ALL structural edges with their dynamic activation colors
+        # Collect activations for structural edges
+        structural_edge_activations = []
+        for i, j in structural_edges:
+            weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
+            structural_edge_activations.append(weight)
+
+        structural_edge_activations = np.array(structural_edge_activations)
+
+        # Normalize to max among structural edges (same as structural mode)
+        if structural_edge_activations.max() > 0:
+            struct_norm = Normalize(vmin=0, vmax=structural_edge_activations.max())
+            structural_edge_activations_norm = struct_norm(structural_edge_activations)
+        else:
+            structural_edge_activations_norm = np.zeros_like(structural_edge_activations)
+
+        # Color structural edges
+        structural_edge_colors = []
+        for act_val in structural_edge_activations_norm:
+            # Gray-to-red gradient (same as structural mode)
+            base = 0.8  # Light gray base
+            r = base + act_val * (1.0 - base)  # → 1.0 when active
+            g = base * (1 - act_val * 0.9)    # → 0.0 when active
+            b = base * (1 - act_val * 0.9)    # → 0.0 when active
+            structural_edge_colors.append((r, g, b, 0.9))
+
+        nx.draw_networkx_edges(
+            G, pos, ax=ax,
+            edgelist=structural_edges,
+            edge_color=structural_edge_colors,
+            width=0.5,
+        )
+
+        # Threshold for non-structural edges (relative to global max)
+        max_synapse = synapse_np.max() if synapse_np.max() > 0 else 1.0
+        dyn_threshold = max_synapse * dynamic_threshold_percentile
+
+        # Step 2: Find and draw NON-STRUCTURAL dynamic edges above threshold
+        non_structural_edges = []
+        non_structural_weights = []
+
+        # Create set of structural edges for fast lookup
+        structural_set = set(structural_edges)
+
+        for i in range(N_viz):
+            for j in range(i+1, N_viz):
+                # Skip if this is a structural edge (already drawn)
+                if (i, j) in structural_set:
+                    continue
+
+                weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
+                if weight > dyn_threshold:
+                    non_structural_edges.append((i, j))
+                    non_structural_weights.append(weight)
+
+        if len(non_structural_edges) > 0:
+            non_structural_weights = np.array(non_structural_weights)
+
+            # Color non-structural edges with gray-to-red gradient
+            non_structural_colors = []
+            for weight in non_structural_weights:
+                act_val = weight / max_synapse
+
+                base = 0.8
+                r = base + act_val * (1.0 - base)
+                g = base * (1 - act_val * 0.9)
+                b = base * (1 - act_val * 0.9)
+                non_structural_colors.append((r, g, b, 0.9))
+
+            # Draw non-structural dynamic edges
+            nx.draw_networkx_edges(
+                G, pos, ax=ax,
+                edgelist=non_structural_edges,
+                edge_color=non_structural_colors,
+                width=0.8,  # Slightly thicker to be visible
+            )
+        
+        # Node colors
+        if activations.max() > 0:
+            node_norm = Normalize(vmin=0, vmax=activations.max())
+            activations_norm = node_norm(activations)
+        else:
+            activations_norm = np.zeros_like(activations)
+        
+        node_colors = []
+        for act_val in activations_norm:
+            base = 0.85
+            r = base + (1 - base) * act_val
+            g = base * (1 - act_val * 0.8)
+            b = base * (1 - act_val * 0.8)
+            node_colors.append((r, g, b))
+        
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            node_color=node_colors,
+            node_size=20,
+            edgecolors='none'
+        )
+        
+        # Title
+        if interpolate_frames > 1:
+            layer_display = f"{layer_idx / interpolate_frames:.2f}"
+        else:
+            layer_display = str(layer_idx)
+        
+        title = f'Hybrid: {topology_desc} + dynamics'
+        if hub_only:
+            title += ' (hub only)'
+        title += f' - layer: {layer_display}'
+        
+        ax.set_title(title, fontsize=16, fontweight='bold')
+        ax.axis('off')
+        
+        # Stats
+        active_neurons = (activations > 0.1 * activations.max()).sum() if activations.max() > 0 else 0
+
+        legend_text = f'Structural edges: {len(structural_edges)}\n'
+        legend_text += f'Non-structural active: {len(non_structural_edges)}\n'
+        legend_text += f'Color: Gray → Red (activation)\n'
+        if hub_only:
+            legend_text += f'Hub neurons: {N_viz}/{N}\n'
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}'
+        else:
+            legend_text += f'Active neurons: {active_neurons}/{N_viz}'
+        
+        ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
+                fontsize=10, verticalalignment='bottom',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+                family='monospace')
+        
+        add_watermark(fig, ax)
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        image = Image.open(buf).copy()
+        images.append(image)
+        plt.close(fig)
+        buf.close()
+        
+        print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
+    
     return images

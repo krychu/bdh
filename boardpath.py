@@ -186,22 +186,24 @@ def run_inference(path: str):
     print("\nGenerating visualizations...")
     from utils.visualize import (
         generate_board_frames,
-        generate_graph_frames,
+        generate_graph_frames_structural,
+        generate_graph_frames_dynamic,
+        generate_graph_frames_hybrid,
         combine_image_lists,
         save_gif
     )
 
     # 1. Generate board prediction frames
-    print("\n  1/5: Generating board predictions...")
+    print("\n  1/7: Generating board predictions...")
     board_images = generate_board_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size,
         interpolate_frames=1
     )
 
-    # 2. Generate hub graph frames
-    print("\n  2/5: Generating E @ Dx (communication) - Hub only...")
-    hub_images = generate_graph_frames(
+    # 2. Generate structural hub graph frames (E @ Dx)
+    print("\n  2/7: Generating structural graph (E @ Dx) - Hub only...")
+    struct_hub_images = generate_graph_frames_structural(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
@@ -211,9 +213,9 @@ def run_inference(path: str):
         interpolate_frames=1
     )
 
-    # 3. Generate full graph frames
-    print("\n  3/5: Generating E @ Dx (communication) - Full view...")
-    full_images = generate_graph_frames(
+    # 3. Generate structural full graph frames (E @ Dx)
+    print("\n  3/7: Generating structural graph (E @ Dx) - Full view...")
+    struct_full_images = generate_graph_frames_structural(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         model=bdh,
@@ -222,29 +224,63 @@ def run_inference(path: str):
         hub_only=False
     )
 
-    # 4. Save individual GIFs
-    print("\n  4/5: Saving individual GIFs...")
+    # 4. Generate dynamic graph frames (pure co-activation)
+    print("\n  4/7: Generating dynamic graph (co-activation) - Hub only...")
+    dynamic_hub_images = generate_graph_frames_dynamic(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        top_k_edges=5000,
+        hub_only=True,
+        interpolate_frames=1
+    )
+
+    # 5. Generate hybrid graph frames (structural + dynamic)
+    print("\n  5/7: Generating hybrid graph (structural + dynamic) - Hub only...")
+    hybrid_hub_images = generate_graph_frames_hybrid(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        model=bdh,
+        top_k_structural=5000,
+        dynamic_threshold_percentile=0.3,
+        topology_type='e_dx',
+        hub_only=True,
+        interpolate_frames=1
+    )
+
+    # 6. Save individual GIFs
+    print("\n  6/7: Saving individual GIFs...")
     save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_images, 'graph_e_dx_hub.gif', duration=170)
-    save_gif(full_images, 'graph_e_dx_full.gif', duration=500)
+    save_gif(struct_hub_images, 'graph_structural_hub.gif', duration=170)
+    save_gif(struct_full_images, 'graph_structural_full.gif', duration=500)
+    save_gif(dynamic_hub_images, 'graph_dynamic_hub.gif', duration=170)
+    save_gif(hybrid_hub_images, 'graph_hybrid_hub.gif', duration=170)
 
-    # 5. Create and save combined visualizations
-    print("\n  5/5: Creating combined visualizations...")
+    # 7. Create and save combined visualizations
+    print("\n  7/7: Creating combined visualizations...")
 
-    # Two-way: board + hub
-    combined_2way = combine_image_lists([board_images, hub_images], spacing=20)
-    save_gif(combined_2way, 'combined_board_hub.gif', duration=170)
+    # Board + structural hub
+    combined_struct = combine_image_lists([board_images, struct_hub_images], spacing=20)
+    save_gif(combined_struct, 'combined_board_structural.gif', duration=170)
 
-    # Three-way: board + hub + full
-    combined_3way = combine_image_lists([board_images, hub_images, full_images], spacing=20)
-    save_gif(combined_3way, 'combined_board_hub_full.gif', duration=170)
+    # Board + dynamic hub
+    combined_dynamic = combine_image_lists([board_images, dynamic_hub_images], spacing=20)
+    save_gif(combined_dynamic, 'combined_board_dynamic.gif', duration=170)
+
+    # Board + hybrid hub
+    combined_hybrid = combine_image_lists([board_images, hybrid_hub_images], spacing=20)
+    save_gif(combined_hybrid, 'combined_board_hybrid.gif', duration=170)
 
     print("\n✓ Visualization files generated:")
-    print("  - output_predictions.gif")
-    print("  - graph_e_dx_hub.gif")
-    print("  - graph_e_dx_full.gif")
-    print("  - combined_board_hub.gif (board + hub)")
-    print("  - combined_board_hub_full.gif (board + hub + full)")
+    print("\nIndividual GIFs:")
+    print("  - output_predictions.gif (board solving)")
+    print("  - graph_structural_hub.gif (E@Dx structure, hub only)")
+    print("  - graph_structural_full.gif (E@Dx structure, all neurons)")
+    print("  - graph_dynamic_hub.gif (pure co-activation, hub only)")
+    print("  - graph_hybrid_hub.gif (structure + dynamics, hub only)")
+    print("\nCombined GIFs:")
+    print("  - combined_board_structural.gif (board + structural)")
+    print("  - combined_board_dynamic.gif (board + dynamic)")
+    print("  - combined_board_hybrid.gif (board + hybrid)")
     print()
 
 def set_all_seeds(seed: int):
