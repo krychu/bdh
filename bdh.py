@@ -87,7 +87,6 @@ class BDH(nn.Module):
             x_frames: List[torch.Tensor] = []
             synapse_frames: List[torch.Tensor] = []
 
-        x = None
         for _ in range(self.L):
             if self.use_abs_pos:
                 # B1TD + TD -> B1TD
@@ -95,11 +94,6 @@ class BDH(nn.Module):
 
             # B1TD @ HDNh -> BHTNh
             x = F.relu(v_ast @ self.Dx)
-
-            if x is None:
-                x = F.relu(v_ast @ self.Dx)
-            else:
-                x = x + F.relu(v_ast @ self.Dx)
             x = self.drop(x)
 
             # BHTNh @ (BHTNh^T @ B1TD) -> BHTNh @ (BHNhT @ B1TD) -> BHTNh @ BHNhD -> BHTD
@@ -114,6 +108,7 @@ class BDH(nn.Module):
             # B1TD + (B1TN @ ND) -> B1TD + B1TD -> B1TD
             v_ast = v_ast + self.ln(y @ self.E)
             v_ast = self.ln(v_ast)
+            #v_ast = self.drop(v_ast)
 
             if capture_frames:
                 self._capture_frame(v_ast, x, y, T, output_frames, x_frames, synapse_frames)
