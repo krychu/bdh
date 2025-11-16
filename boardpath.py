@@ -22,8 +22,8 @@ def get_loaders(boardpath_params: BoardPathParameters, batch_size: int) -> Tuple
 
 def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters]:
     boardpath_params = BoardPathParameters(
-        board_size=8,
-        train_count=4000,
+        board_size=10,
+        train_count=8000,
         val_count=500,
         wall_prob=0.3
     )
@@ -33,8 +33,8 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
         T=boardpath_params.board_size ** 2,
         H=4,
         N=4*1028,
-        D=128,
-        L=8,
+        D=2*128,
+        L=12,
         dropout=0.2, # 0.05
         use_rope=True,
         use_abs_pos=False
@@ -42,7 +42,7 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
 
     bdh_train_params = BDHTrainParameters(
         epoch_cnt=100,
-        batch_size=64,
+        batch_size=16,
         learning_rate=1e-3,
         weight_decay=0.1, # 0.05
         grad_clip=None
@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -199,52 +199,99 @@ def run_inference(path: str):
         interpolate_frames=1
     )
 
-    # 2. Generate hub graph frames
-    print("\n  2/5: Generating E @ Dx (communication) - Hub only...")
-    hub_images = generate_graph_frames(
+    # 2. Generate hub graph frames (synapse mode)
+    print("\n  2/7: Generating E @ Dx - synapse - Hub only...")
+    hub_synapse_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
+        y_frames=y_frames,
         model=bdh,
         top_k_edges=5000,
         topology_type='e_dx',
         hub_only=True,
-        interpolate_frames=1
+        interpolate_frames=1,
+        visualization_mode='synapse'
     )
 
-    # 3. Generate full graph frames
-    print("\n  3/5: Generating E @ Dx (communication) - Full view...")
-    full_images = generate_graph_frames(
+    # 3. Generate hub graph frames (signal flow mode)
+    print("\n  3/7: Generating E @ Dx - signal flow - Hub only...")
+    hub_flow_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
+        y_frames=y_frames,
         model=bdh,
         top_k_edges=5000,
         topology_type='e_dx',
-        hub_only=False
+        hub_only=True,
+        interpolate_frames=1,
+        visualization_mode='signal_flow'
     )
 
-    # 4. Save individual GIFs
-    print("\n  4/5: Saving individual GIFs...")
+    # 4. Generate full graph frames (synapse mode)
+    print("\n  4/7: Generating E @ Dx - synapse - Full view...")
+    full_synapse_images = generate_graph_frames(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        y_frames=y_frames,
+        model=bdh,
+        top_k_edges=5000,
+        topology_type='e_dx',
+        hub_only=False,
+        visualization_mode='synapse'
+    )
+
+    # 5. Generate full graph frames (signal flow mode)
+    print("\n  5/7: Generating E @ Dx - signal flow - Full view...")
+    full_flow_images = generate_graph_frames(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        y_frames=y_frames,
+        model=bdh,
+        top_k_edges=5000,
+        topology_type='e_dx',
+        hub_only=False,
+        visualization_mode='signal_flow'
+    )
+
+    # 6. Save individual GIFs
+    print("\n  6/7: Saving individual GIFs...")
     save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_images, 'graph_e_dx_hub.gif', duration=170)
-    save_gif(full_images, 'graph_e_dx_full.gif', duration=500)
+    save_gif(hub_synapse_images, 'graph_e_dx_hub_synapse.gif', duration=170)
+    save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
+    save_gif(full_synapse_images, 'graph_e_dx_full_synapse.gif', duration=500)
+    save_gif(full_flow_images, 'graph_e_dx_full_flow.gif', duration=500)
 
-    # 5. Create and save combined visualizations
-    print("\n  5/5: Creating combined visualizations...")
+    # 7. Create and save combined visualizations
+    print("\n  7/7: Creating combined visualizations...")
 
-    # Two-way: board + hub
-    combined_2way = combine_image_lists([board_images, hub_images], spacing=20)
-    save_gif(combined_2way, 'combined_board_hub.gif', duration=170)
+    # Two-way: board + hub synapse
+    combined_board_hub_synapse = combine_image_lists([board_images, hub_synapse_images], spacing=20)
+    save_gif(combined_board_hub_synapse, 'combined_board_hub_synapse.gif', duration=170)
 
-    # Three-way: board + hub + full
-    combined_3way = combine_image_lists([board_images, hub_images, full_images], spacing=20)
-    save_gif(combined_3way, 'combined_board_hub_full.gif', duration=170)
+    # Two-way: board + hub flow
+    combined_board_hub_flow = combine_image_lists([board_images, hub_flow_images], spacing=20)
+    save_gif(combined_board_hub_flow, 'combined_board_hub_flow.gif', duration=170)
+
+    # Three-way: board + hub synapse + hub flow
+    combined_3way_compare = combine_image_lists([board_images, hub_synapse_images, hub_flow_images], spacing=20)
+    save_gif(combined_3way_compare, 'combined_board_synapse_flow.gif', duration=170)
+
+    # Four-way: board + hub synapse + hub flow + full synapse
+    combined_4way = combine_image_lists([board_images, hub_synapse_images, hub_flow_images, full_synapse_images], spacing=20)
+    save_gif(combined_4way, 'combined_board_hub_syn_flow_full.gif', duration=170)
 
     print("\n✓ Visualization files generated:")
-    print("  - output_predictions.gif")
-    print("  - graph_e_dx_hub.gif")
-    print("  - graph_e_dx_full.gif")
-    print("  - combined_board_hub.gif (board + hub)")
-    print("  - combined_board_hub_full.gif (board + hub + full)")
+    print("  Individual:")
+    print("    - output_predictions.gif")
+    print("    - graph_e_dx_hub_synapse.gif")
+    print("    - graph_e_dx_hub_flow.gif")
+    print("    - graph_e_dx_full_synapse.gif")
+    print("    - graph_e_dx_full_flow.gif")
+    print("  Combined:")
+    print("    - combined_board_hub_synapse.gif (board + hub synapse)")
+    print("    - combined_board_hub_flow.gif (board + hub flow)")
+    print("    - combined_board_synapse_flow.gif (board + hub synapse + hub flow)")
+    print("    - combined_board_hub_syn_flow_full.gif (board + both hubs + full synapse)")
     print()
 
 def set_all_seeds(seed: int):

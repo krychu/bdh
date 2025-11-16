@@ -246,31 +246,40 @@ def generate_graph_frames(
     layout_seed: int = 42,
     topology_type: str = 'e_dx',
     hub_only: bool = False,
-    interpolate_frames: int = 1
+    interpolate_frames: int = 1,
+    y_frames: Optional[List[torch.Tensor]] = None,
+    visualization_mode: str = 'synapse'
 ) -> List[Image.Image]:
     """
     Generate PIL images with dual-layer color encoding:
 
     - Graph structure (layout): Topology matrix (E @ Dx or Dx.T @ Dx)
     - Edge base color (gray): Structural weight (always visible if > threshold)
-    - Edge overlay (red): Synapse activation per layer
+    - Edge overlay (red): Either synapse activation OR signal flow (depending on visualization_mode)
     - Node base color: Light gray (always visible)
     - Node overlay (red): Neuron activation per layer
 
     Args:
         x_frames: List of L tensors, each shape (N,) with neuron activations per layer
         synapse_frames: List of L tensors, each shape (N, N) with synapse values per layer
-        save_path: Path to save the GIF (e.g., 'graph_activations.gif')
         model: BDH model (to extract topology)
         top_k_edges: Number of strongest connections to include in graph (default: 5000)
-        duration: Duration of each frame in milliseconds (default: 500ms)
         layout_seed: Random seed for reproducible layout (default: 42)
         topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
         hub_only: If True, show only connected neurons (zoomed view)
         interpolate_frames: Number of interpolated frames between each layer (1=no interpolation, 3=2 extra frames)
+        y_frames: List of L tensors, each shape (N,) with y neuron activations per layer (required for 'signal_flow' mode)
+        visualization_mode: 'synapse' (Hebbian co-activation) or 'signal_flow' (causal signal propagation)
     """
     import io
     from matplotlib.colors import Normalize
+
+    # Validate visualization mode
+    if visualization_mode not in ['synapse', 'signal_flow']:
+        raise ValueError(f"visualization_mode must be 'synapse' or 'signal_flow', got '{visualization_mode}'")
+
+    if visualization_mode == 'signal_flow' and y_frames is None:
+        raise ValueError("y_frames is required for 'signal_flow' visualization mode")
 
     # Get parameter topology
     topology_matrix = get_parameter_topology(model, topology_type=topology_type)
@@ -282,8 +291,14 @@ def generate_graph_frames(
         'dx_coact': 'Dx.T @ Dx (co-activation)'
     }[topology_type]
 
+    mode_desc = {
+        'synapse': 'Hebbian co-activation (x.T @ y)',
+        'signal_flow': 'Signal flow (y * weight)'
+    }[visualization_mode]
+
     print(f"Building graph with top {top_k_edges} connections from {N} neurons...")
     print(f"Topology: {topology_desc}")
+    print(f"Visualization mode: {mode_desc}")
     print(f"Hub-only mode: {hub_only}")
     print(f"Edge colors: Light gray (structure) → Red (activation)")
     print(f"Node colors: Light gray (inactive) → Red (activation)")
@@ -358,11 +373,14 @@ def generate_graph_frames(
         print(f"Interpolating {interpolate_frames}x frames between layers...")
         x_frames_interp = []
         synapse_frames_interp = []
+        y_frames_interp = [] if y_frames is not None else None
 
         for i in range(len(x_frames) - 1):
             # Add current frame
             x_frames_interp.append(x_frames[i])
             synapse_frames_interp.append(synapse_frames[i])
+            if y_frames is not None:
+                y_frames_interp.append(y_frames[i])
 
             # Add interpolated frames
             for j in range(1, interpolate_frames):
@@ -373,12 +391,20 @@ def generate_graph_frames(
                 x_frames_interp.append(x_interp)
                 synapse_frames_interp.append(synapse_interp)
 
+                if y_frames is not None:
+                    y_interp = (1 - alpha) * y_frames[i] + alpha * y_frames[i + 1]
+                    y_frames_interp.append(y_interp)
+
         # Add final frame
         x_frames_interp.append(x_frames[-1])
         synapse_frames_interp.append(synapse_frames[-1])
+        if y_frames is not None:
+            y_frames_interp.append(y_frames[-1])
 
         x_frames = x_frames_interp
         synapse_frames = synapse_frames_interp
+        if y_frames is not None:
+            y_frames = y_frames_interp
         print(f"Total frames after interpolation: {len(x_frames)}")
 
     # Normalize structural weights for gray base color (0 to 1)
@@ -404,13 +430,37 @@ def generate_graph_frames(
             activations = activations_full
             synapse_np = synapse_np_full
 
-        # Compute synapse activation for edges in the graph
-        edge_activations = []
-        for i, j in edge_list:
-            syn_weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
-            edge_activations.append(syn_weight)
+        # Compute edge activations based on visualization mode
+        if visualization_mode == 'synapse':
+            # Synapse mode: Use x.T @ y (Hebbian co-activation)
+            edge_activations = []
+            for i, j in edge_list:
+                syn_weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
+                edge_activations.append(syn_weight)
+            edge_activations = np.array(edge_activations)
 
-        edge_activations = np.array(edge_activations)
+        elif visualization_mode == 'signal_flow':
+            # Signal flow mode: Use y[i] * (E @ Dx)[i,j] (causal signal propagation)
+            # Get y activations for this layer
+            y_full = y_frames[layer_idx].cpu().numpy()
+
+            # Handle hub-only mode
+            if hub_only:
+                y_activations = y_full[connected_neurons]
+                topology_subset = topology_np[np.ix_(connected_neurons, connected_neurons)]
+            else:
+                y_activations = y_full
+                topology_subset = topology_np
+
+            edge_activations = []
+            for i, j in edge_list:
+                # Signal flow from i to j: y[i] * weight[i,j]
+                # Signal flow from j to i: y[j] * weight[j,i]
+                # Take average for undirected visualization
+                flow_i_to_j = abs(y_activations[i] * topology_subset[i, j])
+                flow_j_to_i = abs(y_activations[j] * topology_subset[j, i])
+                edge_activations.append((flow_i_to_j + flow_j_to_i) / 2)
+            edge_activations = np.array(edge_activations)
 
         # Normalize activations (0 to 1)
         if edge_activations.max() > 0:
@@ -472,8 +522,12 @@ def generate_graph_frames(
         else:
             layer_display = str(layer_idx)
 
-        # Build title: topology (mode) - layer: X
+        # Build title: topology - mode - layer: X
         title = f'{topology_desc}'
+        if visualization_mode == 'signal_flow':
+            title += ' - signal flow'
+        else:
+            title += ' - synapse'
         if hub_only:
             title += ' (hub only)'
         title += f' - layer: {layer_display}'
