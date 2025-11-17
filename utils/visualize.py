@@ -800,11 +800,10 @@ def generate_interleaved_graph_frames(
         edge_colors_dx = []
         for act_val in edge_act_dx_norm:
             # Start from gray, blend toward red
-            # Only increase channels that are higher in red than gray
             r = gray_base[0] + act_val * (red_color[0] - gray_base[0])  # Increases to 1.0
             g = gray_base[1] - act_val * (gray_base[1] - red_color[1])  # Decreases to 0.164
             b = gray_base[2] - act_val * (gray_base[2] - red_color[2])  # Decreases to 0.164
-            edge_colors_dx.append((r, g, b))
+            edge_colors_dx.append((r, g, b, 0.8))
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
@@ -820,7 +819,7 @@ def generate_interleaved_graph_frames(
             r = gray_base[0] - act_val * (gray_base[0] - blue_color[0])  # Decreases to 0.012
             g = gray_base[1] - act_val * (gray_base[1] - blue_color[1])  # Decreases to 0.376
             b = gray_base[2] + act_val * (blue_color[2] - gray_base[2])  # Increases to 1.0
-            edge_colors_dy.append((r, g, b))
+            edge_colors_dy.append((r, g, b, 0.8))
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
