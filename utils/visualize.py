@@ -644,11 +644,16 @@ def generate_graph_frames(
             active_color=(1.0, 0.0, 0.0)
         )
 
+        # Compute node sizes based on activation
+        node_size_range = (20, 100)  # min to max size
+        node_sizes = [node_size_range[0] + act * (node_size_range[1] - node_size_range[0])
+                      for act in activations_norm]
+
         # Draw nodes
         nx.draw_networkx_nodes(
             G_hub, pos, ax=ax,
             node_color=node_colors,
-            node_size=20,
+            node_size=node_sizes,
             edgecolors='none'
         )
 
@@ -822,10 +827,16 @@ def generate_interleaved_graph_frames(
         # Compute node colors (blend blue and red)
         node_colors = compute_dual_network_node_colors(y_act_norm, x_act_norm, blue_color, red_color, gray_base)
 
+        # Compute node sizes based on max activation (x or y)
+        node_size_range = (20, 100)  # min to max size
+        max_activations = np.maximum(y_act_norm, x_act_norm)
+        node_sizes = [node_size_range[0] + act * (node_size_range[1] - node_size_range[0])
+                      for act in max_activations]
+
         nx.draw_networkx_nodes(
             G_master, pos, ax=ax,
             node_color=node_colors,
-            node_size=20,
+            node_size=node_sizes,
             edgecolors='none'
         )
 
