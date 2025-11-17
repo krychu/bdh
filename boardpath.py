@@ -186,7 +186,7 @@ def run_inference(path: str):
     # Note: This generates hub-only (connected neurons) visualizations for clarity.
     # For full-view or alternative visualizations, see visualize_more.py
     print("\nGenerating visualizations...")
-    from utils.visualize import (
+    from utils.visualize_refactored import (
         generate_board_frames,
         generate_graph_frames,
         generate_interleaved_graph_frames,
@@ -198,8 +198,7 @@ def run_inference(path: str):
     print("\n  1/7: Generating board predictions...")
     board_images = generate_board_frames(
         output_frames=output_frames,
-        board_size=boardpath_params.board_size,
-        interpolate_frames=1
+        board_size=boardpath_params.board_size
     )
 
     # 2. Generate Dx signal flow graph
@@ -211,7 +210,6 @@ def run_inference(path: str):
         model=bdh,
         top_k_edges=5000,
         topology_type='e_dx',
-        interpolate_frames=1,
         visualization_mode='signal_flow'
     )
 
@@ -223,8 +221,7 @@ def run_inference(path: str):
         y_frames=y_frames,
         model=bdh,
         top_k_edges=5000,
-        topology_type='dy_coact',
-        interpolate_frames=1
+        topology_type='dy_coact'
     )
 
     # 4. Generate interleaved dual-network visualization
