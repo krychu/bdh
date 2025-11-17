@@ -252,13 +252,14 @@ def generate_graph_frames(
     top_k_edges: int = 5000,
     layout_seed: int = 42,
     topology_type: str = 'e_dx',
-    hub_only: bool = False,
     interpolate_frames: int = 1,
     y_frames: Optional[List[torch.Tensor]] = None,
     visualization_mode: str = 'synapse'
 ) -> List[Image.Image]:
     """
-    Generate PIL images with dual-layer color encoding:
+    Generate PIL images with dual-layer color encoding (hub-only view).
+
+    Shows only connected neurons for clarity and performance.
 
     - Graph structure (layout): Topology matrix (E @ Dx, Dx.T @ Dx, or Dy.T @ Dy)
     - Edge base color (gray): Structural weight (always visible if > threshold)
@@ -273,7 +274,6 @@ def generate_graph_frames(
         top_k_edges: Number of strongest connections to include in graph (default: 5000)
         layout_seed: Random seed for reproducible layout (default: 42)
         topology_type: 'e_dx' (communication), 'dx_coact' (co-activation), or 'dy_coact' (attention decoder)
-        hub_only: If True, show only connected neurons (zoomed view)
         interpolate_frames: Number of interpolated frames between each layer (1=no interpolation, 3=2 extra frames)
         y_frames: List of L tensors, each shape (N,) with y neuron activations per layer (required for 'signal_flow' mode and dy_coact topology)
         visualization_mode: 'synapse' (Hebbian co-activation) or 'signal_flow' (causal signal propagation) - ignored for dy_coact
@@ -310,10 +310,9 @@ def generate_graph_frames(
         'signal_flow': 'Signal flow (y * weight)'
     }[visualization_mode]
 
-    print(f"Building graph with top {top_k_edges} connections from {N} neurons...")
+    print(f"Building hub graph with top {top_k_edges} connections from {N} neurons...")
     print(f"Topology: {topology_desc}")
     print(f"Visualization mode: {mode_desc}")
-    print(f"Hub-only mode: {hub_only}")
     print(f"Edge colors: Light gray (structure) → Red (activation)")
     print(f"Node colors: Light gray (inactive) → Red (activation)")
 
@@ -343,7 +342,7 @@ def generate_graph_frames(
 
     edge_count = len(edge_list)
 
-    # Identify connected neurons for hub-only mode
+    # Identify connected neurons (hub)
     connected_neurons = set()
     for i, j in edge_list:
         connected_neurons.add(i)
@@ -353,27 +352,22 @@ def generate_graph_frames(
     print(f"Graph built: {N} nodes, {edge_count} edges")
     print(f"Connected neurons: {len(connected_neurons)} ({len(connected_neurons)/N*100:.1f}%)")
 
-    # Handle hub-only mode
-    if hub_only:
-        # Create neuron index mapping (old → new)
-        neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
+    # Create neuron index mapping (old → new)
+    neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
 
-        # Build subgraph with only connected neurons
-        G_hub = nx.Graph()
-        G_hub.add_nodes_from(range(len(connected_neurons)))
+    # Build hub subgraph with only connected neurons
+    G_hub = nx.Graph()
+    G_hub.add_nodes_from(range(len(connected_neurons)))
 
-        edge_list_hub = []
-        for i, j in edge_list:
-            G_hub.add_edge(neuron_map[i], neuron_map[j])
-            edge_list_hub.append((neuron_map[i], neuron_map[j]))
+    edge_list_hub = []
+    for i, j in edge_list:
+        G_hub.add_edge(neuron_map[i], neuron_map[j])
+        edge_list_hub.append((neuron_map[i], neuron_map[j]))
 
-        G = G_hub
-        edge_list = edge_list_hub
-        N_viz = len(connected_neurons)
-        print(f"Hub-only mode: Using {N_viz} connected neurons")
-    else:
-        N_viz = N
-        neuron_map = None
+    G = G_hub
+    edge_list = edge_list_hub
+    N_viz = len(connected_neurons)
+    print(f"Using {N_viz} connected neurons (hub view)")
 
     print(f"Computing force-directed layout...")
 
@@ -429,7 +423,7 @@ def generate_graph_frames(
     for layer_idx, (x_frame, synapse_frame) in enumerate(zip(x_frames, synapse_frames)):
         fig, ax = plt.subplots(figsize=(12, 12))
 
-        # Node activations (full array)
+        # Node activations (full array, then extract hub)
         # For dy_coact, use y activations; otherwise use x activations
         if topology_type == 'dy_coact':
             activations_full = y_frames[layer_idx].cpu().numpy()
@@ -439,14 +433,9 @@ def generate_graph_frames(
         # Edge synapse strengths for this layer (full array)
         synapse_np_full = synapse_frame.cpu().numpy()
 
-        # Handle hub-only mode: extract only connected neurons
-        if hub_only:
-            activations = activations_full[connected_neurons]
-            # Create submatrix for synapse
-            synapse_np = synapse_np_full[np.ix_(connected_neurons, connected_neurons)]
-        else:
-            activations = activations_full
-            synapse_np = synapse_np_full
+        # Extract hub neurons only
+        activations = activations_full[connected_neurons]
+        synapse_np = synapse_np_full[np.ix_(connected_neurons, connected_neurons)]
 
         # Compute edge activations based on topology type and visualization mode
         if topology_type == 'dy_coact':
@@ -470,16 +459,10 @@ def generate_graph_frames(
 
         elif visualization_mode == 'signal_flow':
             # Signal flow mode: Use y[i] * (E @ Dx)[i,j] (causal signal propagation)
-            # Get y activations for this layer
+            # Get y activations for this layer (hub only)
             y_full = y_frames[layer_idx].cpu().numpy()
-
-            # Handle hub-only mode
-            if hub_only:
-                y_activations = y_full[connected_neurons]
-                topology_subset = topology_np[np.ix_(connected_neurons, connected_neurons)]
-            else:
-                y_activations = y_full
-                topology_subset = topology_np
+            y_activations = y_full[connected_neurons]
+            topology_subset = topology_np[np.ix_(connected_neurons, connected_neurons)]
 
             edge_activations = []
             for i, j in edge_list:
@@ -559,8 +542,6 @@ def generate_graph_frames(
                 title += ' - signal flow'
             else:
                 title += ' - synapse'
-        if hub_only:
-            title += ' (hub only)'
         title += f' - layer: {layer_display}'
 
         ax.set_title(title, fontsize=16, fontweight='bold')
@@ -571,12 +552,8 @@ def generate_graph_frames(
         active_synapses = (edge_activations > 0.1 * edge_activations.max()).sum() if edge_activations.max() > 0 else 0
 
         legend_text = 'Color: Inactive (gray) → Active (red)\n'
-
-        if hub_only:
-            legend_text += f'Hub neurons: {N_viz}/{N}\n'
-            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
-        else:
-            legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
+        legend_text += f'Hub neurons: {N_viz}/{N}\n'
+        legend_text += f'Active neurons: {active_neurons}/{N_viz}\n'
         legend_text += f'Active edges: {active_synapses}/{edge_count}'
 
         ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
@@ -610,11 +587,13 @@ def generate_interleaved_graph_frames(
     model,
     top_k_edges: int = 5000,
     layout_seed: int = 42,
-    hub_only: bool = False,
     interpolate_frames: int = 1
 ) -> List[Image.Image]:
     """
-    Generate interleaved visualization showing two-stage computation per layer:
+    Generate interleaved visualization showing two-stage computation per layer (hub-only view).
+
+    Shows only connected neurons for clarity and performance.
+
     - Stage 1 (Blue/Dy): Attention decoding - which neurons activated by attention?
     - Stage 2 (Red/Dx): State propagation - how do those activations propagate?
 
@@ -627,7 +606,6 @@ def generate_interleaved_graph_frames(
         model: BDH model (to extract topologies)
         top_k_edges: Number of strongest connections to include from each topology
         layout_seed: Random seed for reproducible layout
-        hub_only: If True, show only connected neurons (zoomed view)
         interpolate_frames: Number of interpolated frames between each stage (1=no interpolation)
 
     Returns:
@@ -698,35 +676,29 @@ def generate_interleaved_graph_frames(
 
     print(f"Connected neurons: {len(connected_neurons)} ({len(connected_neurons)/N*100:.1f}%)")
 
-    # Handle hub-only mode
-    if hub_only:
-        neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
+    # Create neuron index mapping (old → new)
+    neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
 
-        # Build hub subgraph
-        G_hub = nx.Graph()
-        G_hub.add_nodes_from(range(len(connected_neurons)))
+    # Build hub subgraph with only connected neurons
+    G_hub = nx.Graph()
+    G_hub.add_nodes_from(range(len(connected_neurons)))
 
-        edges_dy_hub = []
-        edges_dx_hub = []
+    edges_dy_hub = []
+    edges_dx_hub = []
 
-        for i, j in edges_dy:
-            if i in connected_neurons and j in connected_neurons:
-                G_hub.add_edge(neuron_map[i], neuron_map[j])
-                edges_dy_hub.append((neuron_map[i], neuron_map[j]))
+    for i, j in edges_dy:
+        G_hub.add_edge(neuron_map[i], neuron_map[j])
+        edges_dy_hub.append((neuron_map[i], neuron_map[j]))
 
-        for i, j in edges_dx:
-            if i in connected_neurons and j in connected_neurons:
-                G_hub.add_edge(neuron_map[i], neuron_map[j])
-                edges_dx_hub.append((neuron_map[i], neuron_map[j]))
+    for i, j in edges_dx:
+        G_hub.add_edge(neuron_map[i], neuron_map[j])
+        edges_dx_hub.append((neuron_map[i], neuron_map[j]))
 
-        G_master = G_hub
-        edges_dy = edges_dy_hub
-        edges_dx = edges_dx_hub
-        N_viz = len(connected_neurons)
-        print(f"Hub-only mode: Using {N_viz} connected neurons")
-    else:
-        N_viz = N
-        neuron_map = None
+    G_master = G_hub
+    edges_dy = edges_dy_hub
+    edges_dx = edges_dx_hub
+    N_viz = len(connected_neurons)
+    print(f"Using {N_viz} connected neurons (hub view)")
 
     # Compute unified layout ONCE (critical for stability)
     print(f"Computing unified layout for {N_viz} nodes...")
@@ -737,20 +709,14 @@ def generate_interleaved_graph_frames(
     images = []
 
     for layer_idx in range(len(x_frames)):
-        # Get activations for this layer
+        # Get activations for this layer (extract hub neurons)
         x_full = x_frames[layer_idx].cpu().numpy()
         y_full = y_frames[layer_idx].cpu().numpy()
         synapse_full = synapse_frames[layer_idx].cpu().numpy()
 
-        # Handle hub-only mode
-        if hub_only:
-            x_act = x_full[connected_neurons]
-            y_act = y_full[connected_neurons]
-            synapse_np = synapse_full[np.ix_(connected_neurons, connected_neurons)]
-        else:
-            x_act = x_full
-            y_act = y_full
-            synapse_np = synapse_full
+        x_act = x_full[connected_neurons]
+        y_act = y_full[connected_neurons]
+        synapse_np = synapse_full[np.ix_(connected_neurons, connected_neurons)]
 
         # Compute edge activations for both networks
         edge_act_dy = []
@@ -866,8 +832,6 @@ def generate_interleaved_graph_frames(
         )
 
         title = f'Layer: {layer_idx} - Dual-Network (Dy+Dx)'
-        if hub_only:
-            title += ' (hub only)'
         ax.set_title(title, fontsize=16, fontweight='bold', color='purple')
         ax.axis('off')
 
