@@ -601,3 +601,288 @@ def generate_graph_frames(
         print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
 
     return images
+
+
+def generate_interleaved_graph_frames(
+    x_frames: List[torch.Tensor],
+    y_frames: List[torch.Tensor],
+    synapse_frames: List[torch.Tensor],
+    model,
+    top_k_edges: int = 5000,
+    layout_seed: int = 42,
+    hub_only: bool = False,
+    interpolate_frames: int = 1
+) -> List[Image.Image]:
+    """
+    Generate interleaved visualization showing two-stage computation per layer:
+    - Stage 1 (Blue/Dy): Attention decoding - which neurons activated by attention?
+    - Stage 2 (Red/Dx): State propagation - how do those activations propagate?
+
+    Creates 2 frames per layer showing the sequential computational flow.
+
+    Args:
+        x_frames: List of L tensors, each shape (N,) with x neuron activations
+        y_frames: List of L tensors, each shape (N,) with y neuron activations
+        synapse_frames: List of L tensors, each shape (N, N) with synapse values
+        model: BDH model (to extract topologies)
+        top_k_edges: Number of strongest connections to include from each topology
+        layout_seed: Random seed for reproducible layout
+        hub_only: If True, show only connected neurons (zoomed view)
+        interpolate_frames: Number of interpolated frames between each stage (1=no interpolation)
+
+    Returns:
+        List of PIL images (2 * L frames total)
+    """
+    import io
+    from matplotlib.colors import Normalize
+
+    print(f"Building interleaved dual-network visualization...")
+    print(f"Stage 1 (Blue): Dy - Attention Decoding")
+    print(f"Stage 2 (Red): Dx - State Propagation")
+
+    # Get both topologies
+    topology_dy = get_parameter_topology(model, topology_type='dy_coact')
+    topology_dx = get_parameter_topology(model, topology_type='e_dx')
+
+    N = topology_dy.shape[0]
+
+    # Convert to numpy
+    topology_dy_np = topology_dy.cpu().numpy()
+    topology_dx_np = topology_dx.cpu().numpy()
+
+    # Get top-K edges from each topology
+    flat_dy = topology_dy_np.flatten()
+    flat_dx = topology_dx_np.flatten()
+
+    threshold_dy = np.partition(flat_dy, -top_k_edges)[-top_k_edges]
+    threshold_dx = np.partition(flat_dx, -top_k_edges)[-top_k_edges]
+
+    # Build unified master graph containing edges from both topologies
+    G_master = nx.Graph()
+    G_master.add_nodes_from(range(N))
+
+    edges_dy = []
+    weights_dy = []
+    edges_dx = []
+    weights_dx = []
+
+    # Collect Dy edges
+    for i in range(N):
+        for j in range(i+1, N):
+            weight = (topology_dy_np[i, j] + topology_dy_np[j, i]) / 2
+            if weight >= threshold_dy:
+                edges_dy.append((i, j))
+                weights_dy.append(weight)
+                G_master.add_edge(i, j)
+
+    # Collect Dx edges
+    for i in range(N):
+        for j in range(i+1, N):
+            weight = (topology_dx_np[i, j] + topology_dx_np[j, i]) / 2
+            if weight >= threshold_dx:
+                edges_dx.append((i, j))
+                weights_dx.append(weight)
+                G_master.add_edge(i, j)
+
+    weights_dy = np.array(weights_dy)
+    weights_dx = np.array(weights_dx)
+
+    print(f"Master graph: {N} nodes, {len(edges_dy)} Dy edges, {len(edges_dx)} Dx edges")
+
+    # Identify connected neurons (for hub-only mode)
+    connected_neurons = set()
+    for i, j in list(edges_dy) + list(edges_dx):
+        connected_neurons.add(i)
+        connected_neurons.add(j)
+    connected_neurons = sorted(connected_neurons)
+
+    print(f"Connected neurons: {len(connected_neurons)} ({len(connected_neurons)/N*100:.1f}%)")
+
+    # Handle hub-only mode
+    if hub_only:
+        neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
+
+        # Build hub subgraph
+        G_hub = nx.Graph()
+        G_hub.add_nodes_from(range(len(connected_neurons)))
+
+        edges_dy_hub = []
+        edges_dx_hub = []
+
+        for i, j in edges_dy:
+            if i in connected_neurons and j in connected_neurons:
+                G_hub.add_edge(neuron_map[i], neuron_map[j])
+                edges_dy_hub.append((neuron_map[i], neuron_map[j]))
+
+        for i, j in edges_dx:
+            if i in connected_neurons and j in connected_neurons:
+                G_hub.add_edge(neuron_map[i], neuron_map[j])
+                edges_dx_hub.append((neuron_map[i], neuron_map[j]))
+
+        G_master = G_hub
+        edges_dy = edges_dy_hub
+        edges_dx = edges_dx_hub
+        N_viz = len(connected_neurons)
+        print(f"Hub-only mode: Using {N_viz} connected neurons")
+    else:
+        N_viz = N
+        neuron_map = None
+
+    # Compute unified layout ONCE (critical for stability)
+    print(f"Computing unified layout for {N_viz} nodes...")
+    pos = nx.spring_layout(G_master, k=1/np.sqrt(N_viz), iterations=50, seed=layout_seed)
+    print(f"Layout computed. Generating {len(x_frames)} dual-network frames...")
+
+    # No interpolation for now - can add later if needed
+    images = []
+
+    for layer_idx in range(len(x_frames)):
+        # Get activations for this layer
+        x_full = x_frames[layer_idx].cpu().numpy()
+        y_full = y_frames[layer_idx].cpu().numpy()
+        synapse_full = synapse_frames[layer_idx].cpu().numpy()
+
+        # Handle hub-only mode
+        if hub_only:
+            x_act = x_full[connected_neurons]
+            y_act = y_full[connected_neurons]
+            synapse_np = synapse_full[np.ix_(connected_neurons, connected_neurons)]
+        else:
+            x_act = x_full
+            y_act = y_full
+            synapse_np = synapse_full
+
+        # Compute edge activations for both networks
+        edge_act_dy = []
+        for i, j in edges_dy:
+            co_activation = y_act[i] * y_act[j]
+            edge_act_dy.append(co_activation)
+        edge_act_dy = np.array(edge_act_dy) if len(edge_act_dy) > 0 else np.array([])
+
+        edge_act_dx = []
+        for i, j in edges_dx:
+            syn_weight = (synapse_np[i, j] + synapse_np[j, i]) / 2
+            edge_act_dx.append(syn_weight)
+        edge_act_dx = np.array(edge_act_dx) if len(edge_act_dx) > 0 else np.array([])
+
+        # Normalize activations
+        if len(edge_act_dy) > 0 and edge_act_dy.max() > 0:
+            edge_act_dy_norm = edge_act_dy / edge_act_dy.max()
+        else:
+            edge_act_dy_norm = np.zeros_like(edge_act_dy) if len(edge_act_dy) > 0 else np.array([])
+
+        if len(edge_act_dx) > 0 and edge_act_dx.max() > 0:
+            edge_act_dx_norm = edge_act_dx / edge_act_dx.max()
+        else:
+            edge_act_dx_norm = np.zeros_like(edge_act_dx) if len(edge_act_dx) > 0 else np.array([])
+
+        if y_act.max() > 0:
+            y_act_norm = y_act / y_act.max()
+        else:
+            y_act_norm = np.zeros_like(y_act)
+
+        if x_act.max() > 0:
+            x_act_norm = x_act / x_act.max()
+        else:
+            x_act_norm = np.zeros_like(x_act)
+
+        # ============================================================
+        # SINGLE FRAME: Both networks shown simultaneously
+        # ============================================================
+        fig, ax = plt.subplots(figsize=(12, 12))
+
+        # Draw Dx edges (red)
+        edge_colors_dx = []
+        for act_val in edge_act_dx_norm:
+            base = 0.75
+            r = base + act_val * (1.0 - base)
+            g = base * (1 - act_val * 0.85)
+            b = base * (1 - act_val * 0.85)
+            edge_colors_dx.append((r, g, b, 0.7))
+
+        nx.draw_networkx_edges(
+            G_master, pos, ax=ax,
+            edgelist=edges_dx,
+            edge_color=edge_colors_dx if len(edge_colors_dx) > 0 else 'lightgray',
+            width=0.5
+        )
+
+        # Draw Dy edges (blue) on top
+        edge_colors_dy = []
+        for act_val in edge_act_dy_norm:
+            base = 0.75
+            r = base * (1 - act_val * 0.85)
+            g = base * (1 - act_val * 0.75)
+            b = base + act_val * (1.0 - base)
+            edge_colors_dy.append((r, g, b, 0.7))
+
+        nx.draw_networkx_edges(
+            G_master, pos, ax=ax,
+            edgelist=edges_dy,
+            edge_color=edge_colors_dy if len(edge_colors_dy) > 0 else 'lightgray',
+            width=0.5
+        )
+
+        # Color nodes: red (x) has priority, then blue (y)
+        # Smooth gradient from gray (inactive) to full color (active)
+        node_colors = []
+
+        for y_val, x_val in zip(y_act_norm, x_act_norm):
+            base = 0.85
+
+            # Priority 1: Red for x (Dx propagation)
+            if x_val > y_val:
+                # Red gradient: gray → red as x_val: 0 → 1
+                r = base + x_val * (1 - base)
+                g = base * (1 - x_val * 0.8)
+                b = base * (1 - x_val * 0.8)
+                node_colors.append((r, g, b))
+            else:
+                # Blue gradient: gray → blue as y_val: 0 → 1
+                r = base * (1 - y_val * 0.8)
+                g = base * (1 - y_val * 0.7)
+                b = base + y_val * (1 - base)
+                node_colors.append((r, g, b))
+
+        nx.draw_networkx_nodes(
+            G_master, pos, ax=ax,
+            node_color=node_colors,
+            node_size=20,
+            edgecolors='none'
+        )
+
+        title = f'Layer: {layer_idx} - Dual-Network (Dy+Dx)'
+        if hub_only:
+            title += ' (hub only)'
+        ax.set_title(title, fontsize=16, fontweight='bold', color='purple')
+        ax.axis('off')
+
+        # Add legend with color indicators
+        # Count neurons by which is dominant (x vs y)
+        red_count = (x_act_norm > y_act_norm).sum()
+        blue_count = (y_act_norm >= x_act_norm).sum()
+
+        legend_text = 'Dual-Network Visualization\n'
+        legend_text += 'Blue: y dominant (Dy attention)\n'
+        legend_text += 'Red: x dominant (Dx propagation)\n'
+        legend_text += 'Intensity: gray (low) → color (high)\n'
+        legend_text += f'Neurons: blue={blue_count}, red={red_count}'
+
+        ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
+                fontsize=10, verticalalignment='bottom',
+                bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.9),
+                family='monospace')
+
+        add_watermark(fig, ax)
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        images.append(Image.open(buf).copy())
+        plt.close(fig)
+        buf.close()
+
+        print(f"  Layer {layer_idx+1}/{len(x_frames)} completed (1 frame)")
+
+    return images
