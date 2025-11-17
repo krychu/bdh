@@ -796,36 +796,42 @@ def generate_interleaved_graph_frames(
         blue_color = np.array([0.012, 0.376, 1.0])  # #0360FF
         gray_base = np.array([0.75, 0.75, 0.75])
 
-        # Draw Dx edges (red)
+        # Draw Dx edges (red) - thickness proportional to activation
         edge_colors_dx = []
+        edge_widths_dx = []
         for act_val in edge_act_dx_norm:
             # Start from gray, blend toward red
             r = gray_base[0] + act_val * (red_color[0] - gray_base[0])  # Increases to 1.0
             g = gray_base[1] - act_val * (gray_base[1] - red_color[1])  # Decreases to 0.164
             b = gray_base[2] - act_val * (gray_base[2] - red_color[2])  # Decreases to 0.164
             edge_colors_dx.append((r, g, b, 0.8))
+            # Width: 0.3 (min) to 1.5 (max)
+            edge_widths_dx.append(0.3 + act_val * 1.2)
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
             edgelist=edges_dx,
             edge_color=edge_colors_dx if len(edge_colors_dx) > 0 else 'lightgray',
-            width=0.5
+            width=edge_widths_dx if len(edge_widths_dx) > 0 else 0.5
         )
 
-        # Draw Dy edges (blue) on top
+        # Draw Dy edges (blue) on top - thickness proportional to activation
         edge_colors_dy = []
+        edge_widths_dy = []
         for act_val in edge_act_dy_norm:
             # Start from gray, blend toward blue
             r = gray_base[0] - act_val * (gray_base[0] - blue_color[0])  # Decreases to 0.012
             g = gray_base[1] - act_val * (gray_base[1] - blue_color[1])  # Decreases to 0.376
             b = gray_base[2] + act_val * (blue_color[2] - gray_base[2])  # Increases to 1.0
             edge_colors_dy.append((r, g, b, 0.8))
+            # Width: 0.3 (min) to 1.5 (max)
+            edge_widths_dy.append(0.3 + act_val * 1.2)
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
             edgelist=edges_dy,
             edge_color=edge_colors_dy if len(edge_colors_dy) > 0 else 'lightgray',
-            width=0.5
+            width=edge_widths_dy if len(edge_widths_dy) > 0 else 0.5
         )
 
         # Color nodes: weighted blend of red (x) and blue (y)
