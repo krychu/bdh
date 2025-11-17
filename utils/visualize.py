@@ -127,10 +127,11 @@ def compute_dual_layer_edge_colors(
     activations: np.ndarray,
     base_range: Tuple[float, float] = (0.7, 0.9),
     active_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-    alpha: float = 0.9
-) -> List[Tuple[float, float, float, float]]:
+    alpha: float = 0.9,
+    width_range: Tuple[float, float] = (0.3, 1.5)
+) -> Tuple[List[Tuple[float, float, float, float]], List[float]]:
     """
-    Compute dual-layer edge colors: gray (structure) → color (activation).
+    Compute dual-layer edge colors and widths: gray (structure) → color (activation).
 
     Args:
         structural_weights: Normalized structural weights [0, 1]
@@ -138,11 +139,14 @@ def compute_dual_layer_edge_colors(
         base_range: (min, max) gray intensity for structure
         active_color: RGB color for full activation
         alpha: Alpha channel value
+        width_range: (min_width, max_width) for edge thickness
 
     Returns:
-        List of RGBA tuples
+        Tuple of (colors, widths)
     """
     colors = []
+    widths = []
+
     for struct_val, act_val in zip(structural_weights, activations):
         # Base: light gray from structure (always visible)
         base_intensity = base_range[0] + struct_val * (base_range[1] - base_range[0])
@@ -155,7 +159,11 @@ def compute_dual_layer_edge_colors(
 
         colors.append((r, g, b, alpha))
 
-    return colors
+        # Width proportional to activation
+        width = width_range[0] + act_val * (width_range[1] - width_range[0])
+        widths.append(width)
+
+    return colors, widths
 
 def compute_dual_layer_node_colors(
     activations: np.ndarray,
@@ -609,20 +617,21 @@ def generate_graph_frames(
         # Normalize edge activations
         edge_activations_norm = normalize_array(edge_activations, vmin=0, vmax=edge_activations.max())
 
-        # Compute edge colors
-        edge_colors = compute_dual_layer_edge_colors(
+        # Compute edge colors and widths
+        edge_colors, edge_widths = compute_dual_layer_edge_colors(
             edge_weights_struct_norm,
             edge_activations_norm,
             base_range=(0.7, 0.9),
             active_color=(1.0, 0.0, 0.0),
-            alpha=0.9
+            alpha=0.9,
+            width_range=(0.3, 1.5)
         )
 
         # Draw edges
         nx.draw_networkx_edges(
             G_hub, pos, ax=ax,
             edge_color=edge_colors,
-            width=0.5
+            width=edge_widths
         )
 
         # Normalize node activations and compute colors
