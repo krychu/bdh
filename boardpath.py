@@ -210,7 +210,8 @@ def run_inference(path: str):
         model=bdh,
         top_k_edges=5000,
         topology_type='e_dx',
-        visualization_mode='signal_flow'
+        visualization_mode='signal_flow',
+        min_component_size=10  # Filter out small clusters
     )
 
     # 3. Generate Dy co-activation graph
@@ -221,7 +222,8 @@ def run_inference(path: str):
         y_frames=y_frames,
         model=bdh,
         top_k_edges=5000,
-        topology_type='dy_coact'
+        topology_type='dy_coact',
+        min_component_size=10  # Filter out small clusters
     )
 
     # 4. Generate interleaved dual-network visualization
@@ -231,7 +233,8 @@ def run_inference(path: str):
         y_frames=y_frames,
         synapse_frames=synapse_frames,
         model=bdh,
-        top_k_edges=5000
+        top_k_edges=5000,
+        min_component_size=10  # Filter out small clusters
     )
 
     # 5. Save individual GIFs

@@ -327,30 +327,50 @@ def build_topology_graph(
 
 def extract_hub_subgraph(
     edge_list: List[Tuple[int, int]],
-    N: int
+    N: int,
+    min_component_size: int = 1
 ) -> Tuple[List[int], dict, List[Tuple[int, int]]]:
     """
-    Extract connected neurons (hub) and remap edge list.
+    Extract connected neurons (hub) and remap edge list, filtering small components.
 
     Args:
         edge_list: List of edges with original neuron indices
         N: Total number of neurons
+        min_component_size: Minimum size of connected components to keep (default: 1 = keep all)
 
     Returns:
         Tuple of (connected_neurons, neuron_map, remapped_edges)
     """
-    # Identify connected neurons
+    # Build temporary graph to find connected components
+    G_temp = nx.Graph()
+    G_temp.add_edges_from(edge_list)
+
+    # Find connected components
+    components = list(nx.connected_components(G_temp))
+
+    # Filter components by size
+    large_components = [comp for comp in components if len(comp) >= min_component_size]
+    small_components = [comp for comp in components if len(comp) < min_component_size]
+
+    if min_component_size > 1 and small_components:
+        small_sizes = sorted([len(comp) for comp in small_components], reverse=True)
+        print(f"  Filtering out {len(small_components)} small components (sizes: {small_sizes[:10]}{'...' if len(small_sizes) > 10 else ''})")
+        print(f"  Keeping {len(large_components)} large components (min size: {min_component_size})")
+
+    # Collect neurons from large components only
     connected_neurons = set()
-    for i, j in edge_list:
-        connected_neurons.add(i)
-        connected_neurons.add(j)
+    for comp in large_components:
+        connected_neurons.update(comp)
     connected_neurons = sorted(connected_neurons)
 
     # Create mapping: old_idx → new_idx
     neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
 
-    # Remap edges
-    remapped_edges = [(neuron_map[i], neuron_map[j]) for i, j in edge_list]
+    # Remap edges (only those where both endpoints are in large components)
+    remapped_edges = []
+    for i, j in edge_list:
+        if i in neuron_map and j in neuron_map:
+            remapped_edges.append((neuron_map[i], neuron_map[j]))
 
     return connected_neurons, neuron_map, remapped_edges
 
@@ -486,7 +506,8 @@ def generate_graph_frames(
     layout_seed: int = 42,
     topology_type: str = 'e_dx',
     y_frames: Optional[List[torch.Tensor]] = None,
-    visualization_mode: str = 'synapse'
+    visualization_mode: str = 'synapse',
+    min_component_size: int = 1
 ) -> List[Image.Image]:
     """
     Generate PIL images with dual-layer color encoding (hub-only view).
@@ -500,6 +521,7 @@ def generate_graph_frames(
         topology_type: 'e_dx', 'dx_coact', or 'dy_coact'
         y_frames: List of L tensors with y neuron activations (required for signal_flow and dy_coact)
         visualization_mode: 'synapse' or 'signal_flow'
+        min_component_size: Minimum connected component size to include (default: 1 = all)
 
     Returns:
         List of PIL Image objects
@@ -535,7 +557,7 @@ def generate_graph_frames(
 
     # Build graph structure
     edge_list, edge_weights_structural = build_topology_graph(topology_matrix, top_k_edges)
-    connected_neurons, neuron_map, edge_list_hub = extract_hub_subgraph(edge_list, N)
+    connected_neurons, neuron_map, edge_list_hub = extract_hub_subgraph(edge_list, N, min_component_size)
 
     N_viz = len(connected_neurons)
     print(f"Graph built: {N} nodes, {len(edge_list)} edges")
@@ -665,7 +687,8 @@ def generate_interleaved_graph_frames(
     synapse_frames: List[torch.Tensor],
     model,
     top_k_edges: int = 5000,
-    layout_seed: int = 42
+    layout_seed: int = 42,
+    min_component_size: int = 1
 ) -> List[Image.Image]:
     """
     Generate interleaved visualization showing two-stage computation per layer (hub-only view).
@@ -679,6 +702,7 @@ def generate_interleaved_graph_frames(
         model: BDH model (to extract topologies)
         top_k_edges: Number of strongest connections from each topology
         layout_seed: Random seed for reproducible layout
+        min_component_size: Minimum connected component size to include (default: 1 = all)
 
     Returns:
         List of PIL images
@@ -700,11 +724,18 @@ def generate_interleaved_graph_frames(
 
     # Build unified hub subgraph containing edges from both topologies
     all_edges = edges_dy + edges_dx
-    connected_neurons, neuron_map, _ = extract_hub_subgraph(all_edges, N)
+    connected_neurons, neuron_map, _ = extract_hub_subgraph(all_edges, N, min_component_size)
 
-    # Remap both edge lists
-    edges_dy_hub = [(neuron_map[i], neuron_map[j]) for i, j in edges_dy]
-    edges_dx_hub = [(neuron_map[i], neuron_map[j]) for i, j in edges_dx]
+    # Remap both edge lists (filtering out edges not in large components)
+    edges_dy_hub = []
+    for i, j in edges_dy:
+        if i in neuron_map and j in neuron_map:
+            edges_dy_hub.append((neuron_map[i], neuron_map[j]))
+
+    edges_dx_hub = []
+    for i, j in edges_dx:
+        if i in neuron_map and j in neuron_map:
+            edges_dx_hub.append((neuron_map[i], neuron_map[j]))
 
     N_viz = len(connected_neurons)
     print(f"Connected neurons: {N_viz} ({N_viz/N*100:.1f}%)")
