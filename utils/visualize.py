@@ -159,8 +159,10 @@ def compute_dual_layer_edge_colors(
 
         colors.append((r, g, b, alpha))
 
-        # Width proportional to activation
-        width = width_range[0] + act_val * (width_range[1] - width_range[0])
+        # Width: dual-layer (structure + activation)
+        # Base width from structure, increased by activation
+        base_width = width_range[0] + struct_val * (width_range[1] - width_range[0]) * 0.4
+        width = base_width + act_val * (width_range[1] - base_width)
         widths.append(width)
 
     return colors, widths
