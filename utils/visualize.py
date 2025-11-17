@@ -791,14 +791,20 @@ def generate_interleaved_graph_frames(
         # ============================================================
         fig, ax = plt.subplots(figsize=(12, 12))
 
+        # Define colors: Red #FF2A2A and Blue #0360FF
+        red_color = np.array([1.0, 0.164, 0.164])  # #FF2A2A
+        blue_color = np.array([0.012, 0.376, 1.0])  # #0360FF
+        gray_base = np.array([0.75, 0.75, 0.75])
+
         # Draw Dx edges (red)
         edge_colors_dx = []
         for act_val in edge_act_dx_norm:
-            base = 0.75
-            r = base + act_val * (1.0 - base)
-            g = base * (1 - act_val * 0.85)
-            b = base * (1 - act_val * 0.85)
-            edge_colors_dx.append((r, g, b, 0.7))
+            # Start from gray, blend toward red
+            # Only increase channels that are higher in red than gray
+            r = gray_base[0] + act_val * (red_color[0] - gray_base[0])  # Increases to 1.0
+            g = gray_base[1] - act_val * (gray_base[1] - red_color[1])  # Decreases to 0.164
+            b = gray_base[2] - act_val * (gray_base[2] - red_color[2])  # Decreases to 0.164
+            edge_colors_dx.append((r, g, b))
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
@@ -810,11 +816,11 @@ def generate_interleaved_graph_frames(
         # Draw Dy edges (blue) on top
         edge_colors_dy = []
         for act_val in edge_act_dy_norm:
-            base = 0.75
-            r = base * (1 - act_val * 0.85)
-            g = base * (1 - act_val * 0.75)
-            b = base + act_val * (1.0 - base)
-            edge_colors_dy.append((r, g, b, 0.7))
+            # Start from gray, blend toward blue
+            r = gray_base[0] - act_val * (gray_base[0] - blue_color[0])  # Decreases to 0.012
+            g = gray_base[1] - act_val * (gray_base[1] - blue_color[1])  # Decreases to 0.376
+            b = gray_base[2] + act_val * (blue_color[2] - gray_base[2])  # Increases to 1.0
+            edge_colors_dy.append((r, g, b))
 
         nx.draw_networkx_edges(
             G_master, pos, ax=ax,
@@ -823,26 +829,29 @@ def generate_interleaved_graph_frames(
             width=0.5
         )
 
-        # Color nodes: red (x) has priority, then blue (y)
-        # Smooth gradient from gray (inactive) to full color (active)
+        # Color nodes: weighted blend of red (x) and blue (y)
+        # When both active: purple
         node_colors = []
 
         for y_val, x_val in zip(y_act_norm, x_act_norm):
-            base = 0.85
+            # Weighted blend based on activation strengths
+            total = y_val + x_val
+            if total > 0:
+                # Normalize weights
+                weight_y = y_val / total
+                weight_x = x_val / total
 
-            # Priority 1: Red for x (Dx propagation)
-            if x_val > y_val:
-                # Red gradient: gray → red as x_val: 0 → 1
-                r = base + x_val * (1 - base)
-                g = base * (1 - x_val * 0.8)
-                b = base * (1 - x_val * 0.8)
-                node_colors.append((r, g, b))
+                # Blend blue and red proportionally
+                blended_color = weight_y * blue_color + weight_x * red_color
+
+                # Interpolate from gray to blended color based on max activation
+                intensity = max(y_val, x_val)
+                final_color = gray_base + intensity * (blended_color - gray_base)
             else:
-                # Blue gradient: gray → blue as y_val: 0 → 1
-                r = base * (1 - y_val * 0.8)
-                g = base * (1 - y_val * 0.7)
-                b = base + y_val * (1 - base)
-                node_colors.append((r, g, b))
+                # No activation: gray
+                final_color = gray_base
+
+            node_colors.append(tuple(final_color))
 
         nx.draw_networkx_nodes(
             G_master, pos, ax=ax,
@@ -858,15 +867,19 @@ def generate_interleaved_graph_frames(
         ax.axis('off')
 
         # Add legend with color indicators
-        # Count neurons by which is dominant (x vs y)
-        red_count = (x_act_norm > y_act_norm).sum()
-        blue_count = (y_act_norm >= x_act_norm).sum()
+        # Count neurons by dominant activation
+        threshold = 0.3
+        blue_dominant = ((y_act_norm > threshold) & (y_act_norm > x_act_norm * 1.5)).sum()
+        red_dominant = ((x_act_norm > threshold) & (x_act_norm > y_act_norm * 1.5)).sum()
+        purple_both = ((y_act_norm > threshold) & (x_act_norm > threshold) &
+                       (y_act_norm <= x_act_norm * 1.5) & (x_act_norm <= y_act_norm * 1.5)).sum()
 
         legend_text = 'Dual-Network Visualization\n'
-        legend_text += 'Blue: y dominant (Dy attention)\n'
-        legend_text += 'Red: x dominant (Dx propagation)\n'
-        legend_text += 'Intensity: gray (low) → color (high)\n'
-        legend_text += f'Neurons: blue={blue_count}, red={red_count}'
+        legend_text += 'Blue: y (Dy attention)\n'
+        legend_text += 'Red: x (Dx propagation)\n'
+        legend_text += 'Purple: both (weighted blend)\n'
+        legend_text += f'~blue={blue_dominant}, ~red={red_dominant}\n'
+        legend_text += f'~purple={purple_both}'
 
         ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
                 fontsize=10, verticalalignment='bottom',
