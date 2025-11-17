@@ -186,15 +186,12 @@ def run_inference(path: str):
     # Note: This generates hub-only (connected neurons) visualizations for clarity.
     # For full-view or alternative visualizations, see visualize_more.py
     print("\nGenerating visualizations...")
-    from utils.visualize_refactored import (
+    from utils.visualize import (
         generate_board_frames,
-        generate_graph_frames as generate_graph_frames_new,
+        generate_graph_frames,
         generate_interleaved_graph_frames,
         combine_image_lists,
         save_gif
-    )
-    from utils.visualize import (
-        generate_graph_frames as generate_graph_frames_old
     )
 
     # 1. Generate board prediction frames
@@ -204,21 +201,9 @@ def run_inference(path: str):
         board_size=boardpath_params.board_size
     )
 
-    # 2. Generate Dx signal flow graph - BOTH OLD AND NEW
-    print("\n  2/7: Generating E @ Dx - signal flow (OLD version)...")
-    hub_flow_images_old = generate_graph_frames_old(
-        x_frames=x_frames,
-        synapse_frames=synapse_frames,
-        y_frames=y_frames,
-        model=bdh,
-        top_k_edges=5000,
-        topology_type='e_dx',
-        interpolate_frames=1,
-        visualization_mode='signal_flow'
-    )
-
-    print("\n  2b/7: Generating E @ Dx - signal flow (NEW version)...")
-    hub_flow_images_new = generate_graph_frames_new(
+    # 2. Generate Dx signal flow graph
+    print("\n  2/7: Generating E @ Dx - signal flow...")
+    hub_flow_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         y_frames=y_frames,
@@ -227,13 +212,10 @@ def run_inference(path: str):
         topology_type='e_dx',
         visualization_mode='signal_flow'
     )
-
-    # Use the new version for the rest of the pipeline
-    hub_flow_images = hub_flow_images_new
 
     # 3. Generate Dy co-activation graph
     print("\n  3/7: Generating Dy.T @ Dy (attention decoder)...")
-    dy_hub_images = generate_graph_frames_new(
+    dy_hub_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
         y_frames=y_frames,
@@ -255,8 +237,7 @@ def run_inference(path: str):
     # 5. Save individual GIFs
     print("\n  5/7: Saving individual GIFs...")
     save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_flow_images_old, 'graph_e_dx_hub_flow_OLD.gif', duration=170)
-    save_gif(hub_flow_images_new, 'graph_e_dx_hub_flow_NEW.gif', duration=170)
+    save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
     save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
     save_gif(interleaved_hub_images, 'graph_interleaved_hub.gif', duration=200)
 
@@ -272,14 +253,11 @@ def run_inference(path: str):
     print("\n✓ Visualization files generated:")
     print("  Individual:")
     print("    - output_predictions.gif (board predictions)")
-    print("    - graph_e_dx_hub_flow_OLD.gif (Dx signal flow - ORIGINAL)")
-    print("    - graph_e_dx_hub_flow_NEW.gif (Dx signal flow - REFACTORED)")
+    print("    - graph_e_dx_hub_flow.gif (Dx signal flow)")
     print("    - graph_dy_coact_hub.gif (Dy attention decoder)")
     print("    - graph_interleaved_hub.gif (Dy→Dx two-stage) ⭐⭐")
     print("  Combined:")
     print("    - combined_board_interleaved.gif (board + interleaved + Dx flow) ⭐⭐⭐ ULTIMATE!")
-    print()
-    print("  🔍 COMPARISON: Check graph_e_dx_hub_flow_OLD.gif vs graph_e_dx_hub_flow_NEW.gif")
     print()
 
 def set_all_seeds(seed: int):
