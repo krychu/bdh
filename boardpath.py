@@ -244,23 +244,11 @@ def run_inference(path: str):
     save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
     save_gif(interleaved_hub_images, 'graph_interleaved_hub.gif', duration=200)
 
-    # 6. Create combined visualizations
-    print("\n  6/7: Creating combined visualizations...")
+    # 6. Create combined visualization
+    print("\n  6/7: Creating combined visualization...")
 
-    # Two-way: board + Dx signal flow
-    combined_board_dx_flow = combine_image_lists([board_images, hub_flow_images], spacing=20)
-    save_gif(combined_board_dx_flow, 'combined_board_dx_flow.gif', duration=170)
-
-    # Two-way: board + Dy decoder
-    combined_board_dy = combine_image_lists([board_images, dy_hub_images], spacing=20)
-    save_gif(combined_board_dy, 'combined_board_dy.gif', duration=170)
-
-    # Three-way: board + Dy + Dx (the complete story!)
-    combined_board_dy_dx = combine_image_lists([board_images, dy_hub_images, hub_flow_images], spacing=20)
-    save_gif(combined_board_dy_dx, 'combined_board_dy_dx.gif', duration=170)
-
-    # Two-way: board + interleaved (THE ULTIMATE!)
-    combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images], spacing=20)
+    # Three-way: board + interleaved + Dx flow (THE ULTIMATE!)
+    combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images, hub_flow_images], spacing=20)
     save_gif(combined_board_interleaved, 'combined_board_interleaved.gif', duration=200)
 
     # 7. Summary
@@ -272,10 +260,7 @@ def run_inference(path: str):
     print("    - graph_dy_coact_hub.gif (Dy attention decoder)")
     print("    - graph_interleaved_hub.gif (Dy→Dx two-stage) ⭐⭐")
     print("  Combined:")
-    print("    - combined_board_dx_flow.gif (board + Dx flow)")
-    print("    - combined_board_dy.gif (board + Dy decoder)")
-    print("    - combined_board_dy_dx.gif (board + Dy + Dx) ⭐")
-    print("    - combined_board_interleaved.gif (board + interleaved) ⭐⭐⭐ ULTIMATE!")
+    print("    - combined_board_interleaved.gif (board + interleaved + Dx flow) ⭐⭐⭐ ULTIMATE!")
     print()
 
 def set_all_seeds(seed: int):
