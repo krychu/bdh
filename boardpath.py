@@ -241,7 +241,7 @@ def run_inference(path: str):
     )
 
     # 5. Generate full graph frames (signal flow mode)
-    print("\n  5/7: Generating E @ Dx - signal flow - Full view...")
+    print("\n  5/9: Generating E @ Dx - signal flow - Full view...")
     full_flow_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
@@ -253,16 +253,43 @@ def run_inference(path: str):
         visualization_mode='signal_flow'
     )
 
-    # 6. Save individual GIFs
-    print("\n  6/7: Saving individual GIFs...")
+    # 6. Generate Dy co-activation graph (hub view)
+    print("\n  6/9: Generating Dy.T @ Dy (attention decoder) - Hub only...")
+    dy_hub_images = generate_graph_frames(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        y_frames=y_frames,
+        model=bdh,
+        top_k_edges=5000,
+        topology_type='dy_coact',
+        hub_only=True,
+        interpolate_frames=1
+    )
+
+    # 7. Generate Dy co-activation graph (full view)
+    print("\n  7/9: Generating Dy.T @ Dy (attention decoder) - Full view...")
+    dy_full_images = generate_graph_frames(
+        x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        y_frames=y_frames,
+        model=bdh,
+        top_k_edges=5000,
+        topology_type='dy_coact',
+        hub_only=False
+    )
+
+    # 8. Save individual GIFs
+    print("\n  8/9: Saving individual GIFs...")
     save_gif(board_images, 'output_predictions.gif', duration=170)
     save_gif(hub_synapse_images, 'graph_e_dx_hub_synapse.gif', duration=170)
     save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
     save_gif(full_synapse_images, 'graph_e_dx_full_synapse.gif', duration=500)
     save_gif(full_flow_images, 'graph_e_dx_full_flow.gif', duration=500)
+    save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
+    save_gif(dy_full_images, 'graph_dy_coact_full.gif', duration=500)
 
-    # 7. Create and save combined visualizations
-    print("\n  7/7: Creating combined visualizations...")
+    # 9. Create and save combined visualizations
+    print("\n  9/9: Creating combined visualizations...")
 
     # Two-way: board + hub synapse
     combined_board_hub_synapse = combine_image_lists([board_images, hub_synapse_images], spacing=20)
@@ -272,26 +299,38 @@ def run_inference(path: str):
     combined_board_hub_flow = combine_image_lists([board_images, hub_flow_images], spacing=20)
     save_gif(combined_board_hub_flow, 'combined_board_hub_flow.gif', duration=170)
 
+    # Two-way: board + Dy hub
+    combined_board_dy = combine_image_lists([board_images, dy_hub_images], spacing=20)
+    save_gif(combined_board_dy, 'combined_board_dy.gif', duration=170)
+
+    # Three-way: board + Dy hub + Dx hub flow (the complete story!)
+    combined_complete = combine_image_lists([board_images, dy_hub_images, hub_flow_images], spacing=20)
+    save_gif(combined_complete, 'combined_board_dy_dx.gif', duration=170)
+
     # Three-way: board + hub synapse + hub flow
     combined_3way_compare = combine_image_lists([board_images, hub_synapse_images, hub_flow_images], spacing=20)
     save_gif(combined_3way_compare, 'combined_board_synapse_flow.gif', duration=170)
 
-    # Four-way: board + hub synapse + hub flow + full synapse
-    combined_4way = combine_image_lists([board_images, hub_synapse_images, hub_flow_images, full_synapse_images], spacing=20)
-    save_gif(combined_4way, 'combined_board_hub_syn_flow_full.gif', duration=170)
+    # Four-way: board + Dy + Dx synapse + Dx flow
+    combined_4way_full = combine_image_lists([board_images, dy_hub_images, hub_synapse_images, hub_flow_images], spacing=20)
+    save_gif(combined_4way_full, 'combined_board_dy_synapse_flow.gif', duration=170)
 
     print("\n✓ Visualization files generated:")
     print("  Individual:")
-    print("    - output_predictions.gif")
-    print("    - graph_e_dx_hub_synapse.gif")
-    print("    - graph_e_dx_hub_flow.gif")
-    print("    - graph_e_dx_full_synapse.gif")
-    print("    - graph_e_dx_full_flow.gif")
+    print("    - output_predictions.gif (board predictions)")
+    print("    - graph_e_dx_hub_synapse.gif (Dx synapse hub)")
+    print("    - graph_e_dx_hub_flow.gif (Dx signal flow hub)")
+    print("    - graph_e_dx_full_synapse.gif (Dx synapse full)")
+    print("    - graph_e_dx_full_flow.gif (Dx signal flow full)")
+    print("    - graph_dy_coact_hub.gif (Dy attention decoder hub)")
+    print("    - graph_dy_coact_full.gif (Dy attention decoder full)")
     print("  Combined:")
-    print("    - combined_board_hub_synapse.gif (board + hub synapse)")
-    print("    - combined_board_hub_flow.gif (board + hub flow)")
-    print("    - combined_board_synapse_flow.gif (board + hub synapse + hub flow)")
-    print("    - combined_board_hub_syn_flow_full.gif (board + both hubs + full synapse)")
+    print("    - combined_board_hub_synapse.gif (board + Dx synapse)")
+    print("    - combined_board_hub_flow.gif (board + Dx flow)")
+    print("    - combined_board_dy.gif (board + Dy decoder)")
+    print("    - combined_board_dy_dx.gif (board + Dy + Dx flow) ⭐ Complete story!")
+    print("    - combined_board_synapse_flow.gif (board + Dx synapse + Dx flow)")
+    print("    - combined_board_dy_synapse_flow.gif (board + Dy + Dx synapse + Dx flow)")
     print()
 
 def set_all_seeds(seed: int):

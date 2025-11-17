@@ -130,18 +130,21 @@ def get_parameter_topology(model, topology_type: str = 'e_dx') -> torch.Tensor:
 
     Args:
         model: BDH model instance
-        topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
+        topology_type: 'e_dx' (communication), 'dx_coact' (co-activation), or 'dy_coact' (attention decoder)
 
     Returns:
         topology: (N, N) tensor where topology[i,j] is connection strength
     """
     # E: (N, D)
     # Dx: (H, D, N//H)
+    # Dy: (H, D, N//H)
     H, D, Nh = model.Dx.shape
     N = H * Nh
 
     # Reshape Dx from (H, D, N//H) to (D, N)
     Dx_reshaped = model.Dx.permute(1, 0, 2).reshape(D, N)
+    # Reshape Dy from (H, D, N//H) to (D, N)
+    Dy_reshaped = model.Dy.permute(1, 0, 2).reshape(D, N)
 
     if topology_type == 'e_dx':
         # E @ Dx: Communication structure
@@ -151,6 +154,10 @@ def get_parameter_topology(model, topology_type: str = 'e_dx') -> torch.Tensor:
         # Dx.T @ Dx: Co-activation structure
         # Shows which neurons respond to similar embedding patterns
         topology = Dx_reshaped.T @ Dx_reshaped
+    elif topology_type == 'dy_coact':
+        # Dy.T @ Dy: Attention decoder co-activation structure
+        # Shows which neurons respond to similar attention features
+        topology = Dy_reshaped.T @ Dy_reshaped
     else:
         raise ValueError(f"Unknown topology_type: {topology_type}")
 
@@ -253,23 +260,26 @@ def generate_graph_frames(
     """
     Generate PIL images with dual-layer color encoding:
 
-    - Graph structure (layout): Topology matrix (E @ Dx or Dx.T @ Dx)
+    - Graph structure (layout): Topology matrix (E @ Dx, Dx.T @ Dx, or Dy.T @ Dy)
     - Edge base color (gray): Structural weight (always visible if > threshold)
-    - Edge overlay (red): Either synapse activation OR signal flow (depending on visualization_mode)
+    - Edge overlay (red): Either synapse activation OR signal flow OR co-activation (depending on mode/topology)
     - Node base color: Light gray (always visible)
     - Node overlay (red): Neuron activation per layer
 
     Args:
-        x_frames: List of L tensors, each shape (N,) with neuron activations per layer
+        x_frames: List of L tensors, each shape (N,) with x neuron activations per layer (used for node coloring in e_dx/dx_coact)
         synapse_frames: List of L tensors, each shape (N, N) with synapse values per layer
         model: BDH model (to extract topology)
         top_k_edges: Number of strongest connections to include in graph (default: 5000)
         layout_seed: Random seed for reproducible layout (default: 42)
-        topology_type: 'e_dx' (communication) or 'dx_coact' (co-activation)
+        topology_type: 'e_dx' (communication), 'dx_coact' (co-activation), or 'dy_coact' (attention decoder)
         hub_only: If True, show only connected neurons (zoomed view)
         interpolate_frames: Number of interpolated frames between each layer (1=no interpolation, 3=2 extra frames)
-        y_frames: List of L tensors, each shape (N,) with y neuron activations per layer (required for 'signal_flow' mode)
-        visualization_mode: 'synapse' (Hebbian co-activation) or 'signal_flow' (causal signal propagation)
+        y_frames: List of L tensors, each shape (N,) with y neuron activations per layer (required for 'signal_flow' mode and dy_coact topology)
+        visualization_mode: 'synapse' (Hebbian co-activation) or 'signal_flow' (causal signal propagation) - ignored for dy_coact
+
+    Note: For dy_coact topology, y_frames are used for node coloring (showing y activations),
+          and edges show co-activation of y neurons (y[i] * y[j])
     """
     import io
     from matplotlib.colors import Normalize
@@ -281,6 +291,9 @@ def generate_graph_frames(
     if visualization_mode == 'signal_flow' and y_frames is None:
         raise ValueError("y_frames is required for 'signal_flow' visualization mode")
 
+    if topology_type == 'dy_coact' and y_frames is None:
+        raise ValueError("y_frames is required for 'dy_coact' topology type")
+
     # Get parameter topology
     topology_matrix = get_parameter_topology(model, topology_type=topology_type)
 
@@ -288,7 +301,8 @@ def generate_graph_frames(
 
     topology_desc = {
         'e_dx': 'E @ Dx (communication)',
-        'dx_coact': 'Dx.T @ Dx (co-activation)'
+        'dx_coact': 'Dx.T @ Dx (co-activation)',
+        'dy_coact': 'Dy.T @ Dy (attention decoder)'
     }[topology_type]
 
     mode_desc = {
@@ -416,7 +430,11 @@ def generate_graph_frames(
         fig, ax = plt.subplots(figsize=(12, 12))
 
         # Node activations (full array)
-        activations_full = x_frame.cpu().numpy()
+        # For dy_coact, use y activations; otherwise use x activations
+        if topology_type == 'dy_coact':
+            activations_full = y_frames[layer_idx].cpu().numpy()
+        else:
+            activations_full = x_frame.cpu().numpy()
 
         # Edge synapse strengths for this layer (full array)
         synapse_np_full = synapse_frame.cpu().numpy()
@@ -430,8 +448,19 @@ def generate_graph_frames(
             activations = activations_full
             synapse_np = synapse_np_full
 
-        # Compute edge activations based on visualization mode
-        if visualization_mode == 'synapse':
+        # Compute edge activations based on topology type and visualization mode
+        if topology_type == 'dy_coact':
+            # For Dy graph: visualize co-activation of output neurons (y)
+            # When both neurons are active, the edge lights up
+            # This shows which neurons are being activated together by the attention summary
+            edge_activations = []
+            for i, j in edge_list:
+                # Co-activation strength: product of activations
+                co_activation = activations[i] * activations[j]
+                edge_activations.append(co_activation)
+            edge_activations = np.array(edge_activations)
+
+        elif visualization_mode == 'synapse':
             # Synapse mode: Use x.T @ y (Hebbian co-activation)
             edge_activations = []
             for i, j in edge_list:
@@ -524,10 +553,12 @@ def generate_graph_frames(
 
         # Build title: topology - mode - layer: X
         title = f'{topology_desc}'
-        if visualization_mode == 'signal_flow':
-            title += ' - signal flow'
-        else:
-            title += ' - synapse'
+        if topology_type != 'dy_coact':
+            # For Dx graphs, show visualization mode
+            if visualization_mode == 'signal_flow':
+                title += ' - signal flow'
+            else:
+                title += ' - synapse'
         if hub_only:
             title += ' (hub only)'
         title += f' - layer: {layer_display}'
