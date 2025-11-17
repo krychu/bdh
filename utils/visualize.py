@@ -793,22 +793,13 @@ def generate_interleaved_graph_frames(
         ax.axis('off')
 
         # Legend
-        threshold = 0.3
-        blue_dominant = ((y_act_norm > threshold) & (y_act_norm > x_act_norm * 1.5)).sum()
-        red_dominant = ((x_act_norm > threshold) & (x_act_norm > y_act_norm * 1.5)).sum()
-        purple_both = ((y_act_norm > threshold) & (x_act_norm > threshold) &
-                       (y_act_norm <= x_act_norm * 1.5) & (x_act_norm <= y_act_norm * 1.5)).sum()
-
-        legend_text = 'Dual-Network Visualization\n'
-        legend_text += 'Blue: y (Dy attention)\n'
-        legend_text += 'Red: x (Dx propagation)\n'
-        legend_text += 'Purple: both (weighted blend)\n'
-        legend_text += f'~blue={blue_dominant}, ~red={red_dominant}\n'
-        legend_text += f'~purple={purple_both}'
+        legend_text = 'Blue: y, Dy propagation\n'
+        legend_text += 'Red: x, Dx propagation\n'
+        legend_text += 'Purple: both (weighted blend)'
 
         ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
                 fontsize=10, verticalalignment='bottom',
-                bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.9),
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
                 family='monospace')
 
         add_watermark(fig, ax)
