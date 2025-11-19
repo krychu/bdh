@@ -257,13 +257,17 @@ def compute_dual_network_edge_colors_and_widths(
 
     for act_val in activations:
         # Blend from gray to target color
-        r = gray_base[0] + act_val * (color[0] - gray_base[0])
-        g = gray_base[1] + act_val * (color[1] - gray_base[1])
-        b = gray_base[2] + act_val * (color[2] - gray_base[2])
+        # r = gray_base[0] + act_val * (color[0] - gray_base[0])
+        # g = gray_base[1] + act_val * (color[1] - gray_base[1])
+        # b = gray_base[2] + act_val * (color[2] - gray_base[2])
+        r = gray_base[0] + 10000.0 * act_val * (color[0] - gray_base[0])
+        g = gray_base[1] + 10000.0 * act_val * (color[1] - gray_base[1])
+        b = gray_base[2] + 10000.0 * act_val * (color[2] - gray_base[2])
         colors.append((r, g, b, alpha))
 
         # Width proportional to activation
-        width = width_range[0] + act_val * (width_range[1] - width_range[0])
+        # width = width_range[0] + act_val * (width_range[1] - width_range[0])
+        width = width_range[0] + act_val * min(10.0*width_range[1] - width_range[0], 2.0)
         widths.append(width)
 
     return colors, widths

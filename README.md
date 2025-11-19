@@ -13,7 +13,9 @@ I find the paper particularly fascinating for its elegant synthesis of concepts 
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-Because of BDH's unique architecture, we can directly visualize its internal state during inference. The animation below shows the model solving a board puzzle. On the left is the model's output as it refines the path across its internal layers. On the right is a real-time visualization of its "brain" - the emergent communication network between its neurons. Red nodes and edges indicate active neurons and synapses, showing the model's "thought process" as it routes information to find the solution.
+BDH's architecture enables direct visualization of its internal computation. However, the challenge is that inference involves the superposition of multiple learned circuits: two fixed topologies (`E @ Dx` for signal propagation and `Dy.T @ Dy` for attention decoding) plus dynamic synaptic state that serves as in-context memory. Each reasoning layer propagates signals through these overlapping networks to compute the next state.
+
+The animation below shows the model solving a board puzzle across its reasoning layers. **Left:** the model's output board predictions being refined layer by layer. **Right:** a unified view of the model's dual-network computation. Blue edges highlight **co-activation patterns** - functionally-related neurons activated together by the attention summary (`y[i] * y[j]` over the `Dy.T @ Dy` topology). Red edges show **causal signal flow** - actual neuron-to-neuron communication (`y[i] * (E @ Dx)[i,j]` over the `E @ Dx` topology). Together, these reveal which conceptual modules are active and how information flows between them to solve the task.
 
 ![Combined board and network visualization](combined_board_network.gif)
 
@@ -24,9 +26,9 @@ Because of BDH's unique architecture, we can directly visualize its internal sta
 The BDH architecture has several properties that distinguish it from conventional Transformers and enable its unique interpretability.
 
 * **Neuron-Centric Scaling**: The architecture operates/scales primarily in the high-dimensional **Neuron** dimension (`N`), rather than the Transformer's dense latent dimension. State and parameters are primarily associated with these neurons, mirroring a biological structure.
-* **Static Graph Topology (The Program)**: The learned parameter matrices (`E`, `Dx`, `Dy`) define a sparse, scale-free **Communication Graph** - the model's long-term learned knowledge and reasoning rules. This emergent structure is observable in the fixed gray background of the network visualization.
-* **Dynamic Synaptic State (The Memory)**: During inference (forward pass), the network maintains a fast-changing state that acts as **in-context memory** or **synaptic plasticity** (the $\rho$ or $\sigma$ matrix in the paper). In the visualization, this dynamic memory is visiblea as the active red edges.
-* **Sparse & Positive Activations**: All internal activation vectors are enforced to be positive and empirically observed to be highly sparse (only a few percent of neurons fire per token). This is key to both computational efficiency and the monosemantic interpretability of individual neurons and synapses.
+* **Dual Fixed Topologies (The Program)**: The learned parameter matrices define two sparse, scale-free topologies: `E @ Dx` (signal propagation paths) and `Dy.T @ Dy` (attention decoder relationships). These represent the model's long-term learned reasoning circuits. In the visualization, these appear as the gray structural scaffold.
+* **Dynamic Synaptic State (The Memory)**: During inference, the network maintains fast-changing in-context memory through synaptic co-activation patterns (computed as `x.T @ y` per layer). This dynamic state, combined with the fixed topologies, determines which circuits are active for each reasoning step. In the visualization, active circuits appear as colored edges and nodes.
+* **Sparse & Positive Activations**: All internal activation vectors are enforced to be positive and empirically observed to be highly sparse (only a few percent of neurons fire per token). This is key to both computational efficiency and the monosemantic interpretability of individual neurons and circuits.
 
 The visualizations in the demo are not a post-hoc approximation; they are a direct rendering of the model's state during computation.
 
@@ -51,10 +53,11 @@ To load a trained model and run it on a randomly generated board:
 python3 boardpath.py --mode inference --model boardpath.pt
 ```
 This will print the input, target, and predicted boards to the console and generate several visualization GIFs:
-- `output_predictions.gif`: The model's board output evolving layer by layer.
-- `graph_e_dx_full.gif`: The full neuron communication graph and its activations.
-- `graph_e_dx_hub.gif`: A zoomed-in view of the most active "hub" of the network.
-- `combined_board_network.gif`: The side-by-side visualization shown in the demo.
+- `output_predictions.gif`: The model's board predictions evolving layer by layer.
+- `graph_e_dx_hub_flow.gif`: Signal flow through the `E @ Dx` communication topology.
+- `graph_dy_coact_hub.gif`: Co-activation patterns in the `Dy.T @ Dy` attention decoder.
+- `graph_interleaved_hub.gif`: Unified dual-network view (blue: Dy co-activation, red: Dx signal flow).
+- `combined_board_interleaved.gif`: Side-by-side board predictions and dual-network visualization (shown in the demo).
 
 #### Configuration
 To adjust the model architecture or task parameters (e.g., board size, number of neurons), edit the `get_config()` function in `boardpath.py`.
