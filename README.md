@@ -7,29 +7,41 @@ This repository contains an educational PyTorch implementation of the BDH-GPU ar
 
 BDH is a novel Large Language Model architecture based on a scale-free, biologically-inspired network of locally-interacting neurons. It aims to bridge the gap between the tensor-based operations of modern Transformers and the graph-based, distributed dynamics of the human brain.
 
-I find the paper particularly fascinating for its elegant synthesis of concepts from neuroscience, dynamical systems, and formal logic into a single, GPU-friendly architecture.
+I find the paper particularly fascinating for its elegant synthesis of concepts from neuroscience, distributed computing, dynamical systems, and formal logic into a single, GPU-friendly architecture.
 
 ## Demo: Pathfinding and Visualizing the Model's "Brain"
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-Because of BDH's unique architecture, we can directly visualize its internal state during inference. The animation below shows the model solving a board puzzle. On the left is the model's output as it refines the path across its internal layers. On the right is a real-time visualization of its "brain" - the emergent communication network between its neurons. Red nodes and edges indicate active neurons and synapses, showing the model's "thought process" as it routes information to find the solution.
+BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring") and dynamic attention mechanisms (the "state").
 
-![Combined board and network visualization](combined_board_network.gif)
+**Visualization Note:** The actual model contains over 8,000 neurons. To make the structure readable, we render only the **"Hub" subgraph**—the top strongest connections representing the core "highway system" of the model.
+
+The animation below shows the model solving a board puzzle:
+*   **Left:** The model's output board predictions being refined layer by layer.
+*   **Right:** A unified view of the reasoning process ($L-1 \to L$), separating Association from Causality.
+    *   **Nodes:** Blue Nodes represent **Context** (neurons $y_{l-1}$ active in the previous step). Red Nodes represent **Inference** (neurons $x_l$ triggered in the current step).
+    *   **Blue Edges (Association):** Highlight non-causal co-activation patterns of the previous context. They connect Blue nodes ($y_{l-1}$) that are functionally related and active together.
+    *   **Red Edges (Causality):** Show the physical signal flow. They trace how the previous context propagates through the fixed topology to trigger the new Red nodes ($y_{l-1} \to x_l$).
+
+Together, they visualize a logical chain: Blue establishes "what we know," and Red executes the logical implication "what follows from it."
+
+![Combined board and network visualization](combined_board_interleaved.gif)
 
 *Legend: `.` = Floor, `#` = Wall, `S` = Start, `E` = End, `*` = Path*
 
 ## Key Concepts of the BDH Architecture
 
-The BDH architecture has several properties that distinguish it from conventional Transformers and enable its unique interpretability.
+The BDH architecture introduces several design choices that distinguish it from conventional Transformers and enable the causal interpretability shown above.
 
-* **Neuron-Centric Scaling**: The architecture operates/scales primarily in the high-dimensional **Neuron** dimension (`N`), rather than the Transformer's dense latent dimension. State and parameters are primarily associated with these neurons, mirroring a biological structure.
-* **Static Graph Topology (The Program)**: The learned parameter matrices (`E`, `Dx`, `Dy`) define a sparse, scale-free **Communication Graph** - the model's long-term learned knowledge and reasoning rules. This emergent structure is observable in the fixed gray background of the network visualization.
-* **Dynamic Synaptic State (The Memory)**: During inference (forward pass), the network maintains a fast-changing state that acts as **in-context memory** or **synaptic plasticity** (the $\rho$ or $\sigma$ matrix in the paper). In the visualization, this dynamic memory is visiblea as the active red edges.
-* **Sparse & Positive Activations**: All internal activation vectors are enforced to be positive and empirically observed to be highly sparse (only a few percent of neurons fire per token). This is key to both computational efficiency and the monosemantic interpretability of individual neurons and synapses.
+* **Neuron-Centric Scaling**: The model scales primarily in the high-dimensional **Neuron** dimension, rather than the dense latent dimension of Transformers. Parameters and state are localized to specific neuron pairs, mirroring biological structure.
+* **Fixed Topologies as "Learned Programs"**: The model weights define two sparse, scale-free graphs that act as the system's fixed ruleset:
+    1. **The Causal Circuit (`E @ Dx`):** Implements a probabilistic form of **Modus Ponens** reasoning ("If concept A is active, trigger concept B"). This corresponds to the **Red** edges in the visualization.
+    2. **The Semantic Circuit (`Dy.T @ Dy`):** Groups neurons representing similar concepts (clustering). This corresponds to the **Blue** edges in the visualization.
+* **Dynamic Synaptic State (Hebbian Memory)**: During inference, the network maintains fast-changing memory in the form of synaptic weights (state). These are updated via a **Hebbian Learning** rule ("neurons that fire together, wire together"). This allows the model to dynamically re-weight its fixed program based on the current context.
+* **Sparse & Positive Activations**: The architecture enforces all activation vectors to be positive and highly sparse. Empirically, only a small fraction of neurons fire per step. This sparsity is what makes the "Hub" visualization possible - it filters out noise and reveals the distinct logical paths taken by the model.
 
-The visualizations in the demo are not a post-hoc approximation; they are a direct rendering of the model's state during computation.
-
+The visualizations in the demo are not a post-hoc approximation; they are a direct rendering of the model's state variables during the forward pass.
 
 ## Usage
 
@@ -43,19 +55,33 @@ To train a new model from scratch, run:
 ```bash
 python3 boardpath.py --mode train
 ```
+
+Optional: You can ensure reproducibility by setting a fixed random seed:
+
+```bash
+python3 boardpath.py --mode train --seed 42
+```
+
 The trained model will be saved to `boardpath.pt`.
 
 #### Inference & Visualization
 To load a trained model and run it on a randomly generated board:
 ```bash
-python3 boardpath.py --mode inference --model boardpath.pt
+python3 boardpath.py --mode inference
 ```
+
+Optional: If you have a specific checkpoint file you wish to load:
+
+```bash
+python3 boardpath.py --mode inference --model my_model.pt
+```
+
 This will print the input, target, and predicted boards to the console and generate several visualization GIFs:
-- `output_predictions.gif`: The model's board output evolving layer by layer.
-- `graph_e_dx_full.gif`: The full neuron communication graph and its activations.
-- `graph_e_dx_hub.gif`: A zoomed-in view of the most active "hub" of the network.
-- `combined_board_network.gif`: The side-by-side visualization shown in the demo.
+- `output_predictions.gif`: The model's board predictions evolving layer by layer.
+- `graph_e_dx_hub_flow.gif`: Signal flow through the E @ Dx communication topology.
+- `graph_dy_coact_hub.gif`: Co-activation patterns in the Dy.T @ Dy attention decoder.
+- `graph_interleaved_hub.gif`: Unified dual-network view (blue: Dy co-activation, red: Dx signal flow).
+- `combined_board_interleaved.gif`: Side-by-side board predictions and dual-network visualization (shown in the demo).
 
 #### Configuration
 To adjust the model architecture or task parameters (e.g., board size, number of neurons), edit the `get_config()` function in `boardpath.py`.
-

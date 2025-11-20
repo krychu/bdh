@@ -22,8 +22,8 @@ def get_loaders(boardpath_params: BoardPathParameters, batch_size: int) -> Tuple
 
 def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters]:
     boardpath_params = BoardPathParameters(
-        board_size=8,
-        train_count=4000,
+        board_size=12,
+        train_count=8000,
         val_count=500,
         wall_prob=0.3
     )
@@ -33,8 +33,8 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
         T=boardpath_params.board_size ** 2,
         H=4,
         N=4*1028,
-        D=128,
-        L=8,
+        D=1*128,
+        L=16,
         dropout=0.2, # 0.05
         use_rope=True,
         use_abs_pos=False
@@ -42,8 +42,8 @@ def get_config() -> Tuple[BoardPathParameters, BDHParameters, BDHTrainParameters
 
     bdh_train_params = BDHTrainParameters(
         epoch_cnt=100,
-        batch_size=64,
-        learning_rate=1e-3,
+        batch_size=16,
+        learning_rate=1e-4,
         weight_decay=0.1, # 0.05
         grad_clip=None
     )
@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -183,68 +183,82 @@ def run_inference(path: str):
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
 
     # Generate visualizations
+    # Note: This generates hub-only (connected neurons) visualizations for clarity.
+    # For full-view or alternative visualizations, see visualize_more.py
     print("\nGenerating visualizations...")
     from utils.visualize import (
         generate_board_frames,
         generate_graph_frames,
+        generate_interleaved_graph_frames,
         combine_image_lists,
         save_gif
     )
 
     # 1. Generate board prediction frames
-    print("\n  1/5: Generating board predictions...")
+    print("\n  1/7: Generating board predictions...")
     board_images = generate_board_frames(
         output_frames=output_frames,
-        board_size=boardpath_params.board_size,
-        interpolate_frames=1
+        board_size=boardpath_params.board_size
     )
 
-    # 2. Generate hub graph frames
-    print("\n  2/5: Generating E @ Dx (communication) - Hub only...")
-    hub_images = generate_graph_frames(
+    # 2. Generate Dx signal flow graph
+    print("\n  2/7: Generating E @ Dx - signal flow...")
+    hub_flow_images = generate_graph_frames(
         x_frames=x_frames,
         synapse_frames=synapse_frames,
+        y_frames=y_frames,
         model=bdh,
         top_k_edges=5000,
         topology_type='e_dx',
-        hub_only=True,
-        interpolate_frames=1
+        visualization_mode='signal_flow',
+        min_component_size=10  # Filter out small clusters
     )
 
-    # 3. Generate full graph frames
-    print("\n  3/5: Generating E @ Dx (communication) - Full view...")
-    full_images = generate_graph_frames(
+    # 3. Generate Dy co-activation graph
+    print("\n  3/7: Generating Dy.T @ Dy (attention decoder)...")
+    dy_hub_images = generate_graph_frames(
         x_frames=x_frames,
+        synapse_frames=synapse_frames,
+        y_frames=y_frames,
+        model=bdh,
+        top_k_edges=5000,
+        topology_type='dy_coact',
+        min_component_size=10  # Filter out small clusters
+    )
+
+    # 4. Generate interleaved dual-network visualization
+    print("\n  4/7: Generating Interleaved Dy+Dx (dual-network)...")
+    interleaved_hub_images = generate_interleaved_graph_frames(
+        x_frames=x_frames,
+        y_frames=y_frames,
         synapse_frames=synapse_frames,
         model=bdh,
         top_k_edges=5000,
-        topology_type='e_dx',
-        hub_only=False
+        min_component_size=10  # Filter out small clusters
     )
 
-    # 4. Save individual GIFs
-    print("\n  4/5: Saving individual GIFs...")
+    # 5. Save individual GIFs
+    print("\n  5/7: Saving individual GIFs...")
     save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_images, 'graph_e_dx_hub.gif', duration=170)
-    save_gif(full_images, 'graph_e_dx_full.gif', duration=500)
+    save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
+    save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
+    save_gif(interleaved_hub_images, 'graph_interleaved_hub.gif', duration=200)
 
-    # 5. Create and save combined visualizations
-    print("\n  5/5: Creating combined visualizations...")
+    # 6. Create combined visualization
+    print("\n  6/7: Creating combined visualization...")
+    combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images], spacing=20)
+    save_gif(combined_board_interleaved, 'combined_board_interleaved.gif', duration=200)
 
-    # Two-way: board + hub
-    combined_2way = combine_image_lists([board_images, hub_images], spacing=20)
-    save_gif(combined_2way, 'combined_board_hub.gif', duration=170)
-
-    # Three-way: board + hub + full
-    combined_3way = combine_image_lists([board_images, hub_images, full_images], spacing=20)
-    save_gif(combined_3way, 'combined_board_hub_full.gif', duration=170)
-
+    # 7. Summary
+    print("\n  7/7: Done!")
     print("\n✓ Visualization files generated:")
-    print("  - output_predictions.gif")
-    print("  - graph_e_dx_hub.gif")
-    print("  - graph_e_dx_full.gif")
-    print("  - combined_board_hub.gif (board + hub)")
-    print("  - combined_board_hub_full.gif (board + hub + full)")
+    print("  Individual:")
+    print("    - output_predictions.gif (board predictions)")
+    print("    - graph_e_dx_hub_flow.gif (Dx signal flow)")
+    print("    - graph_dy_coact_hub.gif (Dy attention decoder)")
+    print("    - graph_interleaved_hub.gif (Dy+Dx dual-network) ⭐⭐")
+    print("  Combined:")
+    print("    - combined_board_interleaved.gif (board + interleaved) ⭐⭐⭐ ULTIMATE!")
     print()
 
 def set_all_seeds(seed: int):

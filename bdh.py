@@ -85,6 +85,7 @@ class BDH(nn.Module):
         if capture_frames:
             output_frames: List[torch.Tensor] = []
             x_frames: List[torch.Tensor] = []
+            y_frames: List[torch.Tensor] = []
             synapse_frames: List[torch.Tensor] = []
 
         for _ in range(self.L):
@@ -111,13 +112,13 @@ class BDH(nn.Module):
             #v_ast = self.drop(v_ast)
 
             if capture_frames:
-                self._capture_frame(v_ast, x, y, T, output_frames, x_frames, synapse_frames)
+                self._capture_frame(v_ast, x, y, T, output_frames, x_frames, y_frames, synapse_frames)
 
         # squ(B1TD) @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
 
         if capture_frames:
-            return logits, output_frames, x_frames, synapse_frames
+            return logits, output_frames, x_frames, y_frames, synapse_frames
         return logits
 
     def _capture_frame(
@@ -128,6 +129,7 @@ class BDH(nn.Module):
         T: int,
         output_frames: List[torch.Tensor],
         x_frames: List[torch.Tensor],
+        y_frames: List[torch.Tensor],
         synapse_frames: List[torch.Tensor]
     ):
         # B1TD @ DV -> BTD @ DV -> BTV
@@ -135,7 +137,7 @@ class BDH(nn.Module):
         predicted = logits.argmax(dim=-1)
         output_frames.append(predicted[0])  # (T,) - single sample
 
-        # Use only first sample for x and synapse frames
+        # Use only first sample for x, y, and synapse frames
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         x_reshaped = x[0].transpose(0, 1).reshape(T, self.N)
         # (N,) - avg activation per neuron across tokens (positions)
@@ -144,6 +146,9 @@ class BDH(nn.Module):
         # Compute synapse matrix for first sample: average(x.T @ y) across tokens
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         y_reshaped = y[0].transpose(0, 1).reshape(T, self.N)
+
+        # (N,) - avg activation per neuron across tokens (positions)
+        y_frames.append(y_reshaped.mean(dim=0).detach().clone())
 
         # TN^T @ TN -> NT @ TN -> NN (avg over tokens)
         synapse = (x_reshaped.T @ y_reshaped) / T
