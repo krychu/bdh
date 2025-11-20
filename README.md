@@ -13,22 +13,20 @@ I find the paper particularly fascinating for its elegant synthesis of concepts 
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring") and dynamic attention mechanisms (the "state").
+![combined_board_interleaved](https://github.com/user-attachments/assets/5ba344a1-a741-4b94-99f8-62a589bd7a86)
 
-**Visualization Note:** The actual model contains over 8,000 neurons. To make the structure readable, we render only the **"Hub" subgraph**—the top strongest connections representing the core "highway system" of the model.
+BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring" or "program") and dynamic attention mechanisms (the "state").
 
-The animation below shows the model solving a board puzzle:
+**Visualization Note:** The actual model contains over 8,000 neurons. To make the structure readable, I render only the **"Hub" subgraph** - the top strongest connections representing the core "highway system" of the model.
+
+The animation above shows the model solving a board puzzle:
 *   **Left:** The model's output board predictions being refined layer by layer.
 *   **Right:** A unified view of the reasoning process ($L-1 \to L$), separating Association from Causality.
     *   **Nodes:** Blue Nodes represent **Context** (neurons $y_{l-1}$ active in the previous step). Red Nodes represent **Inference** (neurons $x_l$ triggered in the current step).
     *   **Blue Edges (Association):** Highlight non-causal co-activation patterns of the previous context. They connect Blue nodes ($y_{l-1}$) that are functionally related and active together.
     *   **Red Edges (Causality):** Show the physical signal flow. They trace how the previous context propagates through the fixed topology to trigger the new Red nodes ($y_{l-1} \to x_l$).
 
-Together, they visualize a logical chain: Blue establishes "what we know," and Red executes the logical implication "what follows from it."
-
-![Combined board and network visualization](combined_board_interleaved.gif)
-
-*Legend: `.` = Floor, `#` = Wall, `S` = Start, `E` = End, `*` = Path*
+Together, they visualize a logical chain: Blue establishes "what we know" and Red executes the logical implication "what follows from it."
 
 ## Key Concepts of the BDH Architecture
 
