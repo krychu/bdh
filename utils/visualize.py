@@ -55,13 +55,11 @@ def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
         loop=0,
         optimize=False
     )
-    print(f"Saved GIF to: {save_path}")
-    print(f"  Frames: {len(images)}")
-    print(f"  Duration per frame: {duration}ms")
 
 def combine_image_lists(
     image_lists: List[List[Image.Image]],
-    spacing: int = 20
+    spacing: int = 20,
+    left_margin: int = 40
 ) -> List[Image.Image]:
     """
     Combine multiple lists of images horizontally into a single list.
@@ -69,6 +67,7 @@ def combine_image_lists(
     Args:
         image_lists: List of image lists to combine
         spacing: Pixels of white space between images (default: 20)
+        left_margin: Pixels of white space on the left (default: 40)
 
     Returns:
         List of combined PIL images
@@ -90,21 +89,15 @@ def combine_image_lists(
     # Get dimensions
     widths = [imgs[0].size[0] for imgs in extended_lists]
     heights = [imgs[0].size[1] for imgs in extended_lists]
-    combined_width = sum(widths) + spacing * (len(widths) - 1)
+    combined_width = sum(widths) + spacing * (len(widths) - 1) + left_margin
     combined_height = max(heights)
-
-    print(f"Combining {len(image_lists)} image lists horizontally:")
-    print(f"  Frame counts: {[len(imgs) for imgs in image_lists]}")
-    print(f"  Individual sizes: {list(zip(widths, heights))}")
-    print(f"  Combined size: {combined_width}×{combined_height}")
-    print(f"  Total frames: {max_frames}")
 
     # Create combined frames
     combined_frames = []
     for frame_idx in range(max_frames):
         combined = Image.new('RGB', (combined_width, combined_height), 'white')
 
-        x_offset = 0
+        x_offset = left_margin
         for img_list, width, height in zip(extended_lists, widths, heights):
             frame = img_list[frame_idx]
             if frame.mode != 'RGB':
@@ -362,10 +355,7 @@ def extract_hub_subgraph(
     large_components = [comp for comp in components if len(comp) >= min_component_size]
     small_components = [comp for comp in components if len(comp) < min_component_size]
 
-    if min_component_size > 1 and small_components:
-        small_sizes = sorted([len(comp) for comp in small_components], reverse=True)
-        print(f"  Filtering out {len(small_components)} small components (sizes: {small_sizes[:10]}{'...' if len(small_sizes) > 10 else ''})")
-        print(f"  Keeping {len(large_components)} large components (min size: {min_component_size})")
+    # Silently filter small components
 
     # Collect neurons from large components only
     connected_neurons = set()
@@ -559,25 +549,13 @@ def generate_graph_frames(
         'signal_flow': 'Signal flow (y * weight)'
     }[visualization_mode]
 
-    print(f"Building hub graph with top {top_k_edges} connections from {N} neurons...")
-    print(f"Topology: {topology_desc}")
-    print(f"Visualization mode: {mode_desc}")
-    print(f"Edge colors: Light gray (structure) → Red (activation)")
-    print(f"Node colors: Light gray (inactive) → Red (activation)")
-
     # Build graph structure
     edge_list, edge_weights_structural = build_topology_graph(topology_matrix, top_k_edges)
     connected_neurons, neuron_map, edge_list_hub = extract_hub_subgraph(edge_list, N, min_component_size)
-
     N_viz = len(connected_neurons)
-    print(f"Graph built: {N} nodes, {len(edge_list)} edges")
-    print(f"Connected neurons: {N_viz} ({N_viz/N*100:.1f}%)")
-    print(f"Using {N_viz} connected neurons (hub view)")
 
     # Compute layout
-    print(f"Computing force-directed layout...")
     pos = compute_graph_layout(edge_list_hub, N_viz, layout_seed)
-    print(f"Layout computed. Creating animation...")
 
     # Build graph for drawing (with ALL hub nodes, not just those with edges)
     G_hub = nx.Graph()
@@ -689,7 +667,6 @@ def generate_graph_frames(
         plt.tight_layout()
 
         images.append(fig_to_pil_image(fig))
-        print(f"  Frame {layer_idx+1}/{len(x_frames)} completed")
 
     return images
 
@@ -727,10 +704,6 @@ def generate_interleaved_graph_frames(
     Returns:
         List of PIL images (one per layer)
     """
-    print(f"Building interleaved dual-network visualization...")
-    print(f"Blue: y_{{L-1}} (previous output) with Dy co-activation")
-    print(f"Red: x_L (current state) with Dx signal flow from y_{{L-1}}")
-
     # Get both topologies
     topology_dy = get_parameter_topology(model, topology_type='dy_coact')
     topology_dx = get_parameter_topology(model, topology_type='e_dx')
@@ -739,8 +712,6 @@ def generate_interleaved_graph_frames(
     # Build graphs from both topologies
     edges_dy, weights_dy = build_topology_graph(topology_dy, top_k_edges)
     edges_dx, weights_dx = build_topology_graph(topology_dx, top_k_edges)
-
-    print(f"Master graph: {N} nodes, {len(edges_dy)} Dy edges, {len(edges_dx)} Dx edges")
 
     # Build unified hub subgraph containing edges from both topologies
     all_edges = edges_dy + edges_dx
@@ -758,14 +729,10 @@ def generate_interleaved_graph_frames(
             edges_dx_hub.append((neuron_map[i], neuron_map[j]))
 
     N_viz = len(connected_neurons)
-    print(f"Connected neurons: {N_viz} ({N_viz/N*100:.1f}%)")
-    print(f"Using {N_viz} connected neurons (hub view)")
 
-    # Compute unified layout ONCE
+    # Compute unified layout
     all_edges_hub = edges_dy_hub + edges_dx_hub
-    print(f"Computing unified layout for {N_viz} nodes...")
     pos = compute_graph_layout(all_edges_hub, N_viz, layout_seed)
-    print(f"Layout computed. Generating {len(x_frames)} dual-network frames...")
 
     # Color definitions
     red_color = np.array([1.0, 0.164, 0.164])  # #FF2A2A
@@ -884,6 +851,5 @@ def generate_interleaved_graph_frames(
         plt.tight_layout()
 
         images.append(fig_to_pil_image(fig))
-        print(f"  Layer {layer_idx+1}/{len(x_frames)} completed (1 frame)")
 
     return images

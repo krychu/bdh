@@ -5,11 +5,11 @@ This repository contains an educational PyTorch implementation of the BDH-GPU ar
 > *A. Kosowski, P. Uznański, J. Chorowski, Z. Stamirowska, M. Bartoszkiewicz.*
 > [_The Dragon Hatchling: The Missing Link between the Transformer and Models of the Brain_](https://doi.org/10.48550/arXiv.2509.26507), arXiv (2025).
 
-BDH is a novel Large Language Model architecture based on a scale-free, biologically-inspired network of locally-interacting neurons. It aims to bridge the gap between the tensor-based operations of modern Transformers and the graph-based, distributed dynamics of the human brain.
+BDH is a novel Large Language Model architecture based on a scale-free, biologically-inspired network of locally-interacting neurons.
 
 I find the paper particularly fascinating for its elegant synthesis of concepts from neuroscience, distributed computing, dynamical systems, and formal logic into a single, GPU-friendly architecture.
 
-## Demo: Pathfinding and Visualizing the Model's "Brain"
+## Demo: Pathfinding and Visualizing Reasoning Logic
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
@@ -17,7 +17,7 @@ The model is trained on a pathfinding task: given an N×N board with obstacles, 
 
 BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring" or "program") and dynamic attention mechanisms (the "state").
 
-**Visualization Note:** The actual model contains over 8,000 neurons. To make the structure readable, I render only the **"Hub" subgraph** - the top strongest connections representing the core "highway system" of the model.
+**Visualization Note:** The model contains over 8,000 neurons, but I render only the **"Hub" subgraph** - the top strongest connections. Remarkably, the sparse, modular organization you see is emergent. The model was not hard-coded to have hubs, but spontaneously organized itself this way from random initialization. This replicates the paper's empirical findings.
 
 The animation above shows the model solving a board puzzle:
 *   **Left:** The model's output board predictions being refined layer by layer.
