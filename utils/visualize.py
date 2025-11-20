@@ -772,21 +772,39 @@ def generate_interleaved_graph_frames(
     blue_color = np.array([0.012, 0.376, 1.0])  # #0360FF
     gray_base = np.array([0.75, 0.75, 0.75])
 
+    # Extract topology subset for Dx (needed for signal flow computation)
+    topology_dx_np = topology_dx.cpu().numpy()
+    topology_dx_subset = topology_dx_np[np.ix_(connected_neurons, connected_neurons)]
+
     # Generate frames
     images = []
     for layer_idx in range(len(x_frames)):
         # Extract hub activations
         x_full = x_frames[layer_idx].cpu().numpy()
         y_full = y_frames[layer_idx].cpu().numpy()
-        synapse_full = synapse_frames[layer_idx].cpu().numpy()
 
         x_act = x_full[connected_neurons]
         y_act = y_full[connected_neurons]
-        synapse_np = synapse_full[np.ix_(connected_neurons, connected_neurons)]
 
-        # Compute edge activations
+        # Blue (Dy) edges: Co-activation patterns in attention decoder
+        # Shows which y neurons activate together (functional relationships)
         edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_act)
-        edge_act_dx = compute_edge_activations_synapse(edges_dx_hub, synapse_np)
+
+        # Red (Dx) edges: Signal flow from previous layer
+        # Shows how y_{l-1} propagates through E@Dx to produce x_l
+        if layer_idx == 0:
+            # Layer 0: x is driven by input embeddings, not previous y
+            # Show no signal flow (all edges inactive)
+            edge_act_dx = np.zeros(len(edges_dx_hub))
+        else:
+            # Layer 1+: Show causal flow from y_{l-1} -> x_l
+            y_prev_full = y_frames[layer_idx - 1].cpu().numpy()
+            y_prev_act = y_prev_full[connected_neurons]
+            edge_act_dx = compute_edge_activations_signal_flow(
+                edges_dx_hub,
+                y_prev_act,
+                topology_dx_subset
+            )
 
         # Normalize
         edge_act_dy_norm = normalize_array(edge_act_dy) if len(edge_act_dy) > 0 else np.array([])
