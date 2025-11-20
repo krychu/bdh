@@ -227,7 +227,7 @@ def run_inference(path: str):
     )
 
     # 4. Generate interleaved dual-network visualization
-    print("\n  4/7: Generating Interleaved Dy+Dx (two-stage flow)...")
+    print("\n  4/7: Generating Interleaved Dy+Dx (dual-network)...")
     interleaved_hub_images = generate_interleaved_graph_frames(
         x_frames=x_frames,
         y_frames=y_frames,
@@ -246,8 +246,6 @@ def run_inference(path: str):
 
     # 6. Create combined visualization
     print("\n  6/7: Creating combined visualization...")
-
-    # Three-way: board + interleaved + Dx flow (THE ULTIMATE!)
     combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images, hub_flow_images], spacing=20)
     save_gif(combined_board_interleaved, 'combined_board_interleaved.gif', duration=200)
 
@@ -258,9 +256,9 @@ def run_inference(path: str):
     print("    - output_predictions.gif (board predictions)")
     print("    - graph_e_dx_hub_flow.gif (Dx signal flow)")
     print("    - graph_dy_coact_hub.gif (Dy attention decoder)")
-    print("    - graph_interleaved_hub.gif (Dy→Dx two-stage) ⭐⭐")
+    print("    - graph_interleaved_hub.gif (Dy+Dx dual-network)")
     print("  Combined:")
-    print("    - combined_board_interleaved.gif (board + interleaved + Dx flow) ⭐⭐⭐ ULTIMATE!")
+    print("    - combined_board_interleaved.gif (board + interleaved + Dx flow)")
     print()
 
 def set_all_seeds(seed: int):

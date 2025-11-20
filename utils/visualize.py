@@ -711,9 +711,13 @@ def generate_interleaved_graph_frames(
     min_component_size: int = 1
 ) -> List[Image.Image]:
     """
-    Generate interleaved visualization showing two-stage computation per layer (hub-only view).
+    Generate interleaved dual-network visualization (hub-only view).
 
-    Shows Dy network (blue) and Dx network (red) overlaid on unified graph layout.
+    Each frame shows the causal computation for a layer:
+    - Blue nodes: y_{L-1} (previous layer output, source of signal)
+    - Red nodes: x_L (current layer state, destination of signal)
+    - Blue edges: y_{L-1} co-activation patterns (Dy topology)
+    - Red edges: y_{L-1} -> x_L signal flow (Dx topology)
 
     Args:
         x_frames: List of L tensors, each shape (N,) with x neuron activations
@@ -725,11 +729,11 @@ def generate_interleaved_graph_frames(
         min_component_size: Minimum connected component size to include (default: 1 = all)
 
     Returns:
-        List of PIL images
+        List of PIL images (one per layer)
     """
     print(f"Building interleaved dual-network visualization...")
-    print(f"Stage 1 (Blue): Dy - Attention Decoding")
-    print(f"Stage 2 (Red): Dx - State Propagation")
+    print(f"Blue: y_{{L-1}} (previous output) with Dy co-activation")
+    print(f"Red: x_L (current state) with Dx signal flow from y_{{L-1}}")
 
     # Get both topologies
     topology_dy = get_parameter_topology(model, topology_type='dy_coact')
@@ -779,27 +783,28 @@ def generate_interleaved_graph_frames(
     # Generate frames
     images = []
     for layer_idx in range(len(x_frames)):
-        # Extract hub activations
+        # Extract current layer activations
         x_full = x_frames[layer_idx].cpu().numpy()
-        y_full = y_frames[layer_idx].cpu().numpy()
-
         x_act = x_full[connected_neurons]
-        y_act = y_full[connected_neurons]
 
-        # Blue (Dy) edges: Co-activation patterns in attention decoder
-        # Shows which y neurons activate together (functional relationships)
-        edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_act)
-
-        # Red (Dx) edges: Signal flow from previous layer
-        # Shows how y_{l-1} propagates through E@Dx to produce x_l
+        # Get y from PREVIOUS layer (or zeros for layer 0)
         if layer_idx == 0:
-            # Layer 0: x is driven by input embeddings, not previous y
-            # Show no signal flow (all edges inactive)
-            edge_act_dx = np.zeros(len(edges_dx_hub))
+            # Layer 0: No previous y, show only x (input-driven)
+            y_prev_act = np.zeros_like(x_act)
         else:
-            # Layer 1+: Show causal flow from y_{l-1} -> x_l
             y_prev_full = y_frames[layer_idx - 1].cpu().numpy()
             y_prev_act = y_prev_full[connected_neurons]
+
+        # Blue (Dy) edges: Co-activation patterns of y_{l-1}
+        # Shows which previous-layer neurons activated together
+        edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_prev_act)
+
+        # Red (Dx) edges: Signal flow from y_{l-1} to x_l
+        # Shows how previous layer output propagates through E@Dx to produce current x
+        if layer_idx == 0:
+            # Layer 0: x is driven by input embeddings, not previous y
+            edge_act_dx = np.zeros(len(edges_dx_hub))
+        else:
             edge_act_dx = compute_edge_activations_signal_flow(
                 edges_dx_hub,
                 y_prev_act,
@@ -809,7 +814,7 @@ def generate_interleaved_graph_frames(
         # Normalize
         edge_act_dy_norm = normalize_array(edge_act_dy) if len(edge_act_dy) > 0 else np.array([])
         edge_act_dx_norm = normalize_array(edge_act_dx) if len(edge_act_dx) > 0 else np.array([])
-        y_act_norm = normalize_array(y_act)
+        y_prev_act_norm = normalize_array(y_prev_act)
         x_act_norm = normalize_array(x_act)
 
         # Create figure
@@ -847,11 +852,12 @@ def generate_interleaved_graph_frames(
             )
 
         # Compute node colors (blend blue and red)
-        node_colors = compute_dual_network_node_colors(y_act_norm, x_act_norm, blue_color, red_color, gray_base)
+        # Blue represents y_{l-1}, Red represents x_l
+        node_colors = compute_dual_network_node_colors(y_prev_act_norm, x_act_norm, blue_color, red_color, gray_base)
 
-        # Compute node sizes based on max activation (x or y)
+        # Compute node sizes based on max activation (x or y_prev)
         node_size_range = (20, 100)  # min to max size
-        max_activations = np.maximum(y_act_norm, x_act_norm)
+        max_activations = np.maximum(y_prev_act_norm, x_act_norm)
         node_sizes = [node_size_range[0] + act * (node_size_range[1] - node_size_range[0])
                       for act in max_activations]
 
@@ -863,14 +869,15 @@ def generate_interleaved_graph_frames(
         )
 
         # Title
-        title = f'Layer: {layer_idx} - Dual-Network (Dy+Dx)'
+        title = f'Layer: {layer_idx} - Causal Flow (y_{{prev}} → x)'
         ax.set_title(title, fontsize=16, fontweight='bold', color='purple')
         ax.axis('off')
 
         # Legend
-        legend_text = 'Blue: y, Dy propagation\n'
-        legend_text += 'Red: x, Dx propagation\n'
-        legend_text += 'Purple: both (weighted blend)'
+        legend_text = 'Blue: y_{L-1} (previous output)\n'
+        legend_text += 'Red: x_L (current state)\n'
+        legend_text += 'Blue edges: y_{L-1} co-activation\n'
+        legend_text += 'Red edges: y_{L-1} → x_L signal flow'
 
         ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
                 fontsize=10, verticalalignment='bottom',
