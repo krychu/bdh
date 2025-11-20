@@ -246,7 +246,7 @@ def run_inference(path: str):
 
     # 6. Create combined visualization
     print("\n  6/7: Creating combined visualization...")
-    combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images, hub_flow_images], spacing=20)
+    combined_board_interleaved = combine_image_lists([board_images, interleaved_hub_images], spacing=20)
     save_gif(combined_board_interleaved, 'combined_board_interleaved.gif', duration=200)
 
     # 7. Summary
@@ -256,9 +256,9 @@ def run_inference(path: str):
     print("    - output_predictions.gif (board predictions)")
     print("    - graph_e_dx_hub_flow.gif (Dx signal flow)")
     print("    - graph_dy_coact_hub.gif (Dy attention decoder)")
-    print("    - graph_interleaved_hub.gif (Dy+Dx dual-network)")
+    print("    - graph_interleaved_hub.gif (Dy+Dx dual-network) ⭐⭐")
     print("  Combined:")
-    print("    - combined_board_interleaved.gif (board + interleaved + Dx flow)")
+    print("    - combined_board_interleaved.gif (board + interleaved) ⭐⭐⭐ ULTIMATE!")
     print()
 
 def set_all_seeds(seed: int):
