@@ -414,14 +414,27 @@ def compute_edge_activations_synapse(
 
 def compute_edge_activations_signal_flow(
     edge_list: List[Tuple[int, int]],
-    y_activations: np.ndarray,
-    topology_matrix: np.ndarray
+    source_activations: np.ndarray,
+    topology_matrix: np.ndarray,
+    target_activations: Optional[np.ndarray] = None
 ) -> np.ndarray:
-    """Compute edge activations using signal flow mode (y * weight)."""
+    """
+    Compute causal signal flow.
+    If target_activations is provided: Flow = |Source * W * Target| (Successful Transmission)
+    If not: Flow = |Source * W| (Attempted Broadcast)
+    """
     activations = []
     for i, j in edge_list:
-        flow_i_to_j = abs(y_activations[i] * topology_matrix[i, j])
-        flow_j_to_i = abs(y_activations[j] * topology_matrix[j, i])
+        # i -> j
+        flow_i_to_j = abs(source_activations[i] * topology_matrix[i, j])
+        # j -> i
+        flow_j_to_i = abs(source_activations[j] * topology_matrix[j, i])
+
+        # Gate by target activation if provided
+        if target_activations is not None:
+            flow_i_to_j *= target_activations[j]  # Target is j
+            flow_j_to_i *= target_activations[i]  # Target is i
+
         activations.append((flow_i_to_j + flow_j_to_i) / 2)
     return np.array(activations)
 
@@ -592,7 +605,13 @@ def generate_graph_frames(
         elif visualization_mode == 'signal_flow':
             y_full = y_frames[layer_idx].cpu().numpy()
             y_activations = y_full[connected_neurons]
-            edge_activations = compute_edge_activations_signal_flow(edge_list_hub, y_activations, topology_subset)
+            x_activations = activations  # x activations already extracted above
+            edge_activations = compute_edge_activations_signal_flow(
+                edge_list_hub,
+                source_activations=y_activations,
+                topology_matrix=topology_subset,
+                target_activations=x_activations
+            )
 
         # Normalize edge activations
         edge_activations_norm = normalize_array(edge_activations, vmin=0, vmax=edge_activations.max())
@@ -770,8 +789,9 @@ def generate_interleaved_graph_frames(
         else:
             edge_act_dx = compute_edge_activations_signal_flow(
                 edges_dx_hub,
-                y_prev_act,
-                topology_dx_subset
+                source_activations=y_prev_act,
+                topology_matrix=topology_dx_subset,
+                target_activations=x_act
             )
 
         # Normalize
