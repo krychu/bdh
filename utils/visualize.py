@@ -281,8 +281,8 @@ def compute_edge_activations_signal_flow(
 ) -> np.ndarray:
     """
     Compute causal signal flow.
-    If target_activations is provided: Flow = |Source * W * Target| (Successful Transmission)
-    If not: Flow = |Source * W| (Attempted Broadcast)
+    If target_activations is provided: Flow = |Source * W * Target| (Successful transmission)
+    If not: Flow = |Source * W| (Broadcast magnitude)
     """
     activations = []
     for i, j in edge_list:
@@ -452,12 +452,12 @@ def generate_processing_frames(
 
         # Blue edges: co-activation of y_{l-1}
         edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_prev_act) if len(edges_dy_hub) > 0 else np.array([])
-        # Red edges: flow y_{l-1} -> x_l via E@Dx
+        # Red edges: flow y_{l-1} -> x_l via E@Dx (broadcast magnitude; no gating by x)
         edge_act_dx = compute_edge_activations_signal_flow(
             edges_dx_hub,
             source_activations=y_prev_act,
             topology_matrix=topology_dx_subset,
-            target_activations=x_act
+            target_activations=None
         ) if len(edges_dx_hub) > 0 else np.array([])
 
         edge_act_dy_norm = normalize_array(edge_act_dy) if edge_act_dy.size > 0 else np.array([])
@@ -467,7 +467,8 @@ def generate_processing_frames(
         x_norm = normalize_array(x_act)
 
         node_colors = compute_dual_network_node_colors(y_norm, x_norm, blue_color, red_color, gray_base)
-        node_size_range = (30, 140)
+        # node_size_range = (30, 140)
+        node_size_range = (5, 40)
         node_sizes = [node_size_range[0] + max_val * (node_size_range[1] - node_size_range[0])
                       for max_val in np.maximum(y_norm, x_norm)]
 
