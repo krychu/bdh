@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, y_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames, synapse_frames, attn_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -185,35 +185,26 @@ def run_inference(path: str):
     print("\nGenerating visualizations...")
     from utils.visualize import (
         generate_board_frames,
-        generate_graph_frames,
-        generate_interleaved_graph_frames,
-        combine_image_lists,
+        generate_processing_frames,
         save_gif
     )
 
     board_images = generate_board_frames(output_frames, boardpath_params.board_size)
-    hub_flow_images = generate_graph_frames(x_frames, synapse_frames, bdh, 5000,
-                                             topology_type='e_dx', y_frames=y_frames,
-                                             visualization_mode='signal_flow', min_component_size=10)
-    dy_hub_images = generate_graph_frames(x_frames, synapse_frames, bdh, 5000,
-                                          topology_type='dy_coact', y_frames=y_frames,
-                                          min_component_size=10)
-    interleaved_hub_images = generate_interleaved_graph_frames(x_frames, y_frames, synapse_frames,
-                                                                bdh, 5000, min_component_size=10)
+    processing_images = generate_processing_frames(
+        output_frames=output_frames,
+        x_frames=x_frames,
+        y_frames=y_frames,
+        model=bdh,
+        board_size=boardpath_params.board_size,
+        top_k_edges=200,
+        min_component_size=10
+    )
 
     save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
-    save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
-    save_gif(interleaved_hub_images, 'graph_interleaved_hub.gif', duration=200)
-
-    combined = combine_image_lists([board_images, interleaved_hub_images], spacing=20)
-    save_gif(combined, 'combined_board_interleaved.gif', duration=200)
+    save_gif(processing_images, 'combined_board_interleaved.gif', duration=200)
 
     print("\nVisualization files:")
     print("  output_predictions.gif")
-    print("  graph_e_dx_hub_flow.gif")
-    print("  graph_dy_coact_hub.gif")
-    print("  graph_interleaved_hub.gif")
     print("  combined_board_interleaved.gif")
     print()
 

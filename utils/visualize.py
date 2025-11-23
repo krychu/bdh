@@ -311,22 +311,21 @@ def build_topology_graph(
     topology_np = topology_matrix.cpu().numpy()
     N = topology_np.shape[0]
 
-    # Get threshold for top-K edges
-    flat_topology = topology_np.flatten()
-    threshold = np.partition(flat_topology, -top_k_edges)[-top_k_edges]
+    # Use only upper triangle to avoid duplicates, then pick exact top_k edges
+    iu, ju = np.triu_indices(N, k=1)
+    weights = (topology_np[iu, ju] + topology_np[ju, iu]) / 2  # Symmetrize
 
-    # Build edge list (undirected, upper triangle only)
-    edge_list = []
-    edge_weights = []
+    if top_k_edges < len(weights):
+        top_idx = np.argpartition(weights, -top_k_edges)[-top_k_edges:]
+        # Sort selected edges by weight descending for stability
+        top_idx = top_idx[np.argsort(-weights[top_idx])]
+    else:
+        top_idx = np.arange(len(weights))
 
-    for i in range(N):
-        for j in range(i+1, N):
-            weight = (topology_np[i, j] + topology_np[j, i]) / 2  # Symmetrize
-            if weight >= threshold:
-                edge_list.append((i, j))
-                edge_weights.append(weight)
+    edge_list = [(int(iu[k]), int(ju[k])) for k in top_idx]
+    edge_weights = weights[top_idx]
 
-    return edge_list, np.array(edge_weights)
+    return edge_list, edge_weights
 
 def extract_hub_subgraph(
     edge_list: List[Tuple[int, int]],
@@ -868,6 +867,162 @@ def generate_interleaved_graph_frames(
                 family='monospace')
 
         add_watermark(fig, ax)
+        plt.tight_layout()
+
+        images.append(fig_to_pil_image(fig))
+
+    return images
+
+# ============================================================================
+# Combined Processing Visualization (board + attention + dual graph)
+# ============================================================================
+
+def generate_processing_frames(
+    output_frames: List[torch.Tensor],
+    x_frames: List[torch.Tensor],
+    y_frames: List[torch.Tensor],
+    model,
+    board_size: int,
+    top_k_edges: int = 500,
+    layout_seed: int = 42,
+    min_component_size: int = 10
+) -> List[Image.Image]:
+    """
+    Build per-layer panels showing:
+    1) Board prediction
+    2) Dual fixed graphs lit by current activations (Dy co-activation in blue, E@Dx flow in red)
+    """
+    cmap_board = ListedColormap(['white', 'black', 'lime', 'red', 'gold'])
+
+    # Fixed topologies
+    topology_dx = get_parameter_topology(model, topology_type='e_dx')
+    topology_dy = get_parameter_topology(model, topology_type='dy_coact')
+    N = topology_dx.shape[0]
+
+    edges_dx, _ = build_topology_graph(topology_dx, top_k_edges)
+    edges_dy, _ = build_topology_graph(topology_dy, top_k_edges)
+
+    all_edges = edges_dx + edges_dy
+    connected_neurons, neuron_map, _ = extract_hub_subgraph(all_edges, N, min_component_size)
+
+    if len(connected_neurons) == 0:
+        connected_neurons = list(range(N))
+        neuron_map = {i: i for i in connected_neurons}
+
+    edges_dx_hub = []
+    for (i, j) in edges_dx:
+        if i in neuron_map and j in neuron_map:
+            edges_dx_hub.append((neuron_map[i], neuron_map[j]))
+
+    edges_dy_hub = []
+    for (i, j) in edges_dy:
+        if i in neuron_map and j in neuron_map:
+            edges_dy_hub.append((neuron_map[i], neuron_map[j]))
+
+    N_viz = len(connected_neurons)
+    all_edges_hub = edges_dx_hub + edges_dy_hub
+    pos = compute_graph_layout(all_edges_hub, N_viz, layout_seed)
+
+    topology_dx_np = topology_dx.cpu().numpy()
+    topology_dx_subset = topology_dx_np[np.ix_(connected_neurons, connected_neurons)]
+
+    red_color = np.array([1.0, 0.164, 0.164])   # #FF2A2A
+    blue_color = np.array([0.012, 0.376, 1.0])  # #0360FF
+    gray_base = np.array([0.75, 0.75, 0.75])
+
+    images = []
+    for layer_idx, board_tokens in enumerate(output_frames):
+        fig, axes = plt.subplots(1, 2, figsize=(14, 7))
+
+        # ------------------------------------------------------------------
+        # Panel 1: Board prediction
+        # ------------------------------------------------------------------
+        board = board_tokens.cpu().numpy().reshape(board_size, board_size)
+        axes[0].imshow(board, cmap=cmap_board, vmin=0, vmax=4, interpolation='nearest')
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+        axes[0].set_title(f'Board prediction - layer {layer_idx}', fontsize=14, fontweight='bold')
+
+        # ------------------------------------------------------------------
+        # Panel 2: Dual fixed graphs lit by activations
+        # ------------------------------------------------------------------
+        x_full = x_frames[layer_idx].cpu().numpy()
+        x_act = x_full[connected_neurons]
+
+        if layer_idx == 0:
+            y_prev_act = np.zeros_like(x_act)
+        else:
+            y_prev_full = y_frames[layer_idx - 1].cpu().numpy()
+            y_prev_act = y_prev_full[connected_neurons]
+
+        # Blue edges: co-activation of y_{l-1}
+        edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_prev_act) if len(edges_dy_hub) > 0 else np.array([])
+        # Red edges: flow y_{l-1} -> x_l via E@Dx
+        edge_act_dx = compute_edge_activations_signal_flow(
+            edges_dx_hub,
+            source_activations=y_prev_act,
+            topology_matrix=topology_dx_subset,
+            target_activations=x_act
+        ) if len(edges_dx_hub) > 0 else np.array([])
+
+        edge_act_dy_norm = normalize_array(edge_act_dy) if edge_act_dy.size > 0 else np.array([])
+        edge_act_dx_norm = normalize_array(edge_act_dx) if edge_act_dx.size > 0 else np.array([])
+
+        y_norm = normalize_array(y_prev_act)
+        x_norm = normalize_array(x_act)
+
+        node_colors = compute_dual_network_node_colors(y_norm, x_norm, blue_color, red_color, gray_base)
+        node_size_range = (30, 140)
+        node_sizes = [node_size_range[0] + max_val * (node_size_range[1] - node_size_range[0])
+                      for max_val in np.maximum(y_norm, x_norm)]
+
+        G = nx.Graph()
+        G.add_nodes_from(range(N_viz))
+        G.add_edges_from(all_edges_hub)
+
+        # Red edges (Dx flow)
+        edge_colors_dx, edge_widths_dx = compute_dual_network_edge_colors_and_widths(
+            edge_act_dx_norm, red_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
+        )
+        if len(edges_dx_hub) > 0:
+            nx.draw_networkx_edges(
+                G, pos, ax=axes[1],
+                edgelist=edges_dx_hub,
+                edge_color=edge_colors_dx,
+                width=edge_widths_dx
+            )
+
+        # Blue edges (Dy co-activation)
+        edge_colors_dy, edge_widths_dy = compute_dual_network_edge_colors_and_widths(
+            edge_act_dy_norm, blue_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
+        )
+        if len(edges_dy_hub) > 0:
+            nx.draw_networkx_edges(
+                G, pos, ax=axes[1],
+                edgelist=edges_dy_hub,
+                edge_color=edge_colors_dy,
+                width=edge_widths_dy
+            )
+
+        nx.draw_networkx_nodes(
+            G, pos, ax=axes[1],
+            node_color=node_colors,
+            node_size=node_sizes,
+            edgecolors='none'
+        )
+        axes[1].set_title(f'Fixed graphs lit by activations - layer {layer_idx}', fontsize=14, fontweight='bold')
+        axes[1].axis('off')
+
+        legend_text = 'Blue: y_{l-1} co-activation (Dy)\n'
+        legend_text += 'Red: y_{l-1} → x_l flow (E@Dx)\n'
+        legend_text += f'Hub neurons: {N_viz}/{N}'
+
+        axes[1].text(0.02, 0.02, legend_text, transform=axes[1].transAxes,
+                     fontsize=10, verticalalignment='bottom',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+                     family='monospace')
+
+        add_watermark(fig, axes[1])
         plt.tight_layout()
 
         images.append(fig_to_pil_image(fig))
