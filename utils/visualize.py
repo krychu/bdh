@@ -467,7 +467,6 @@ def generate_processing_frames(
         x_norm = normalize_array(x_act)
 
         node_colors = compute_dual_network_node_colors(y_norm, x_norm, blue_color, red_color, gray_base)
-        # node_size_range = (30, 140)
         node_size_range = (5, 40)
         node_sizes = [node_size_range[0] + max_val * (node_size_range[1] - node_size_range[0])
                       for max_val in np.maximum(y_norm, x_norm)]
