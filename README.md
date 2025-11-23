@@ -13,7 +13,7 @@ I find the paper particularly fascinating for its elegant synthesis of concepts 
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-![combined_board_interleaved](https://github.com/user-attachments/assets/5ba344a1-a741-4b94-99f8-62a589bd7a86)
+![combined_board_interleaved](https://github.com/user-attachments/assets/82a3ab72-a237-456e-a29e-b5f65dd7b6db)
 
 BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring" or "program") and dynamic attention mechanisms (the "state").
 
