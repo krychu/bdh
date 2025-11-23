@@ -475,19 +475,7 @@ def generate_processing_frames(
         G.add_nodes_from(range(N_viz))
         G.add_edges_from(all_edges_hub)
 
-        # Red edges (Dx flow)
-        edge_colors_dx, edge_widths_dx = compute_dual_network_edge_colors_and_widths(
-            edge_act_dx_norm, red_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
-        )
-        if len(edges_dx_hub) > 0:
-            nx.draw_networkx_edges(
-                G, pos, ax=axes[1],
-                edgelist=edges_dx_hub,
-                edge_color=edge_colors_dx,
-                width=edge_widths_dx
-            )
-
-        # Blue edges (Dy co-activation)
+        # Blue edges (Dy co-activation) drawn first (precursor to x)
         edge_colors_dy, edge_widths_dy = compute_dual_network_edge_colors_and_widths(
             edge_act_dy_norm, blue_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
         )
@@ -497,6 +485,18 @@ def generate_processing_frames(
                 edgelist=edges_dy_hub,
                 edge_color=edge_colors_dy,
                 width=edge_widths_dy
+            )
+
+        # Red edges (Dx flow) drawn after (destination / update path)
+        edge_colors_dx, edge_widths_dx = compute_dual_network_edge_colors_and_widths(
+            edge_act_dx_norm, red_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
+        )
+        if len(edges_dx_hub) > 0:
+            nx.draw_networkx_edges(
+                G, pos, ax=axes[1],
+                edgelist=edges_dx_hub,
+                edge_color=edge_colors_dx,
+                width=edge_widths_dx
             )
 
         nx.draw_networkx_nodes(
