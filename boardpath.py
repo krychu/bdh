@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, y_frames, synapse_frames, attn_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")

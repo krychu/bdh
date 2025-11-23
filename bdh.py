@@ -86,8 +86,6 @@ class BDH(nn.Module):
             output_frames: List[torch.Tensor] = []
             x_frames: List[torch.Tensor] = []
             y_frames: List[torch.Tensor] = []
-            synapse_frames: List[torch.Tensor] = []
-            attn_frames: List[torch.Tensor] = []
 
         for _ in range(self.L):
             if self.use_abs_pos:
@@ -99,10 +97,7 @@ class BDH(nn.Module):
             x = self.drop(x)
 
             # BHTNh @ (BHTNh^T @ B1TD) -> BHTNh @ (BHNhT @ B1TD) -> BHTNh @ BHNhD -> BHTD
-            if capture_frames:
-                a_ast, attn_scores = self.linear_attn(x, x, v_ast, return_scores=True)  # attn_scores: B H T T
-            else:
-                a_ast = self.linear_attn(x, x, v_ast)
+            a_ast = self.linear_attn(x, x, v_ast)
 
             # (BHTD @ HDNh) * BHTNh -> BHTNh * BHTNh -> BHTNh
             y = F.relu(self.ln(a_ast) @ self.Dy) * x
@@ -120,20 +115,17 @@ class BDH(nn.Module):
                     v_ast,
                     x,
                     y,
-                    attn_scores,
                     T,
                     output_frames,
                     x_frames,
-                    y_frames,
-                    synapse_frames,
-                    attn_frames
+                    y_frames
                 )
 
         # squ(B1TD) @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
 
         if capture_frames:
-            return logits, output_frames, x_frames, y_frames, synapse_frames, attn_frames
+            return logits, output_frames, x_frames, y_frames
         return logits
 
     def _capture_frame(
@@ -141,13 +133,10 @@ class BDH(nn.Module):
         v_ast: torch.Tensor,
         x: torch.Tensor,
         y: torch.Tensor,
-        attn_scores: torch.Tensor,
         T: int,
         output_frames: List[torch.Tensor],
         x_frames: List[torch.Tensor],
-        y_frames: List[torch.Tensor],
-        synapse_frames: List[torch.Tensor],
-        attn_frames: List[torch.Tensor]
+        y_frames: List[torch.Tensor]
     ):
         # B1TD @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
@@ -167,13 +156,7 @@ class BDH(nn.Module):
         # (N,) - avg activation per neuron across tokens (positions)
         y_frames.append(y_reshaped.mean(dim=0).detach().clone())
 
-        # TN^T @ TN -> NT @ TN -> NN (avg over tokens)
-        synapse = (x_reshaped.T @ y_reshaped) / T
-        synapse_frames.append(synapse.detach().clone())
-
-        # Attention heatmap per layer: average over heads for first sample
-        attn_avg = attn_scores.mean(dim=1)[0]  # (T, T)
-        attn_frames.append(attn_avg.detach().clone())
+        # Synapse and attention frames removed in simplified visualization path
 
 # For RoPE pairs we use concatenated layout, instead of interleaved. For
 # (a,b,c,d) the pairs are (a,c) and (b,d).
