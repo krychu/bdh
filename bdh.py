@@ -86,6 +86,8 @@ class BDH(nn.Module):
             output_frames: List[torch.Tensor] = []
             x_frames: List[torch.Tensor] = []
             y_frames: List[torch.Tensor] = []
+            attn_frames: List[torch.Tensor] = []  # Attention scores per layer
+            logits_frames: List[torch.Tensor] = []  # Per-layer logits
 
         for _ in range(self.L):
             if self.use_abs_pos:
@@ -97,7 +99,10 @@ class BDH(nn.Module):
             x = self.drop(x)
 
             # BHTNh @ (BHTNh^T @ B1TD) -> BHTNh @ (BHNhT @ B1TD) -> BHTNh @ BHNhD -> BHTD
-            a_ast = self.linear_attn(x, x, v_ast)
+            if capture_frames:
+                a_ast, attn_scores = self.linear_attn(x, x, v_ast, return_scores=True)
+            else:
+                a_ast = self.linear_attn(x, x, v_ast)
 
             # (BHTD @ HDNh) * BHTNh -> BHTNh * BHTNh -> BHTNh
             y = F.relu(self.ln(a_ast) @ self.Dy) * x
@@ -120,12 +125,17 @@ class BDH(nn.Module):
                     x_frames,
                     y_frames
                 )
+                # Capture attention scores (average over heads) -> (B, T, T)
+                attn_frames.append(attn_scores.mean(dim=1).detach().clone())
+                # Capture per-layer logits
+                layer_logits = v_ast.squeeze(1) @ self.readout  # (B, T, V)
+                logits_frames.append(layer_logits.detach().clone())
 
         # squ(B1TD) @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
 
         if capture_frames:
-            return logits, output_frames, x_frames, y_frames
+            return logits, output_frames, x_frames, y_frames, attn_frames, logits_frames
         return logits
 
     def _capture_frame(

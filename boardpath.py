@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, y_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames, attn_frames, logits_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -183,29 +183,34 @@ def run_inference(path: str):
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
 
     print("\nGenerating visualizations...")
-    from utils.visualize import (
-        generate_board_frames,
-        generate_processing_frames,
+    from utils.visualize_v2 import (
+        generate_two_panel_animation,
         save_gif
     )
 
-    board_images = generate_board_frames(output_frames, boardpath_params.board_size)
-    processing_images = generate_processing_frames(
+    # New two-panel visualization
+    images = generate_two_panel_animation(
+        input_board=input_board,
         output_frames=output_frames,
         x_frames=x_frames,
         y_frames=y_frames,
+        attn_frames=attn_frames,
+        logits_frames=logits_frames,
         model=bdh,
         board_size=boardpath_params.board_size,
-        top_k_edges=200,
-        min_component_size=10
+        config={
+            'M_neurons': 300,
+            'k_attn': 2,
+            'w_min': 0.05,
+            'k_edges_per_source': 3,
+            'E_flow': 300,
+        }
     )
 
-    save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(processing_images, 'combined_board_interleaved.gif', duration=200)
+    save_gif(images, 'bdh_visualization.gif', duration=500)
 
     print("\nVisualization files:")
-    print("  output_predictions.gif")
-    print("  combined_board_interleaved.gif")
+    print("  bdh_visualization.gif")
     print()
 
 def set_all_seeds(seed: int):
