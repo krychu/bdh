@@ -257,12 +257,23 @@ def build_fixed_edges(
     return final_edges, np.array(final_weights), kept_original_indices
 
 
+def normalize_positions(positions: np.ndarray) -> np.ndarray:
+    """Normalize positions to [-1, 1] range."""
+    for dim in range(2):
+        min_val = positions[:, dim].min()
+        max_val = positions[:, dim].max()
+        if max_val - min_val > 1e-8:
+            positions[:, dim] = 2 * (positions[:, dim] - min_val) / (max_val - min_val) - 1
+    return positions
+
+
 def compute_force_layout(
     edges: List[Tuple[int, int]],
     weights: np.ndarray,
     M: int,
     seed: int = 42,
-    iterations: int = 100
+    iterations: int = 100,
+    **kwargs
 ) -> np.ndarray:
     """
     Compute 2D force-directed layout using networkx.
@@ -295,15 +306,9 @@ def compute_force_layout(
     )
 
     positions = np.array([pos_dict[i] for i in range(M)])
+    return normalize_positions(positions)
 
-    # Normalize to [-1, 1]
-    for dim in range(2):
-        min_val = positions[:, dim].min()
-        max_val = positions[:, dim].max()
-        if max_val - min_val > 1e-8:
-            positions[:, dim] = 2 * (positions[:, dim] - min_val) / (max_val - min_val) - 1
 
-    return positions
 
 
 # ============================================================================
@@ -472,8 +477,8 @@ def generate_neuron_animation(
     M = len(selected_indices)
     print(f"    {len(edges)} edges, {M} neurons after filtering")
 
-    # Compute layout
-    print("  Computing layout...")
+    # Compute layout (force-directed)
+    print("  Computing force layout...")
     positions = compute_force_layout(
         edges,
         np.abs(edge_weights),

@@ -188,13 +188,7 @@ def run_inference(path: str):
     images = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
-        model=bdh,
-        config={
-            'M_neurons': 300,
-            'w_eff_threshold': 0.125,
-            'max_edges': 2000,
-            'min_component_size': 10,
-        }
+        model=bdh
     )
 
     save_gif(images, 'bdh_visualization.gif', duration=500)
