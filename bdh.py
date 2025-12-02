@@ -153,20 +153,15 @@ class BDH(nn.Module):
         predicted = logits.argmax(dim=-1)
         output_frames.append(predicted[0])  # (T,) - single sample
 
-        # Use only first sample for x, y, and synapse frames
+        # Use only first sample for x, y frames
+        # Return full (T, N) arrays - averaging is done in visualization code
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         x_reshaped = x[0].transpose(0, 1).reshape(T, self.N)
-        # (N,) - avg activation per neuron across tokens (positions)
-        x_frames.append(x_reshaped.mean(dim=0).detach().clone())
+        x_frames.append(x_reshaped.detach().clone())  # (T, N)
 
-        # Compute synapse matrix for first sample: average(x.T @ y) across tokens
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         y_reshaped = y[0].transpose(0, 1).reshape(T, self.N)
-
-        # (N,) - avg activation per neuron across tokens (positions)
-        y_frames.append(y_reshaped.mean(dim=0).detach().clone())
-
-        # Synapse and attention frames removed in simplified visualization path
+        y_frames.append(y_reshaped.detach().clone())  # (T, N)
 
 # For RoPE pairs we use concatenated layout, instead of interleaved. For
 # (a,b,c,d) the pairs are (a,c) and (b,d).

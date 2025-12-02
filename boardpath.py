@@ -191,6 +191,7 @@ def run_inference(path: str):
     # New two-panel visualization
     images = generate_two_panel_animation(
         input_board=input_board,
+        target_board=target_board,
         output_frames=output_frames,
         x_frames=x_frames,
         y_frames=y_frames,
@@ -202,8 +203,9 @@ def run_inference(path: str):
             'M_neurons': 300,
             'k_attn': 2,
             'w_min': 0.05,
-            'k_edges_per_source': 3,
-            'E_flow': 300,
+            'w_eff_threshold': 0.125,  # Only show |Gx| > 0.125 edges
+            'max_edges': 2000,
+            'min_component_size': 10,
         }
     )
 
