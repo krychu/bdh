@@ -1,27 +1,39 @@
+"""
+BDH Neuron Dynamics Visualization
+
+Visualizes signal flow through the neuron graph Gx = E @ Dx:
+- Fixed layout from force-directed algorithm based on Gx connectivity
+- Neurons selected by degree in Gx
+- Gray edges show Gx structure, darken with signal flow
+- Red fill = x_l activation (destination)
+- Blue ring = y_{l-1} activation (source)
+"""
+
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, Normalize
 import numpy as np
 from PIL import Image
 import torch
-from typing import List, Optional, Tuple
-import networkx as nx
-from utils.build_boardpath_dataset import FLOOR, WALL, START, END, PATH
+from torch import nn
+from typing import List, Dict, Tuple, Optional
 import io
+
+
+# ============================================================================
+# Configuration Defaults
+# ============================================================================
+
+DEFAULT_CONFIG = {
+    'M_neurons': 300,           # Candidate neurons to consider
+    'w_eff_threshold': 0.15,    # Minimum |Gx| to show edge
+    'max_edges': 2000,          # Cap on total edges
+    'min_component_size': 5,    # Remove components with fewer neurons
+    'layout_seed': 42,          # Random seed for layout
+}
+
 
 # ============================================================================
 # Core Utilities
 # ============================================================================
-
-def add_watermark(fig, ax):
-    """Add GitHub URL watermark to bottom-right corner of the plot."""
-    ax.text(0.98, 0.02, 'https://github.com/krychu/bdh',
-            transform=ax.transAxes,
-            fontsize=8,
-            verticalalignment='bottom',
-            horizontalalignment='right',
-            color='black',
-            alpha=1.0,
-            family='monospace')
 
 def fig_to_pil_image(fig) -> Image.Image:
     """Convert matplotlib figure to PIL Image."""
@@ -33,14 +45,6 @@ def fig_to_pil_image(fig) -> Image.Image:
     buf.close()
     return image
 
-def normalize_array(arr: np.ndarray, vmin: float = 0, vmax: float = None) -> np.ndarray:
-    """Normalize array to [0, 1] range."""
-    if vmax is None:
-        vmax = arr.max()
-    if vmax > 0:
-        norm = Normalize(vmin=vmin, vmax=vmax)
-        return norm(arr)
-    return np.zeros_like(arr)
 
 def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
     """Save a list of PIL images as an animated GIF."""
@@ -56,470 +60,459 @@ def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
         optimize=False
     )
 
+
+def normalize_robust(arr: np.ndarray, percentile_low: float = 5, percentile_high: float = 95) -> np.ndarray:
+    """Normalize array using robust percentile-based normalization."""
+    if arr.size == 0:
+        return arr
+    low = np.percentile(arr, percentile_low)
+    high = np.percentile(arr, percentile_high)
+    if high - low > 1e-8:
+        return np.clip((arr - low) / (high - low), 0, 1)
+    return np.zeros_like(arr)
+
+
 # ============================================================================
-# Color Computation
+# Neuron Selection
 # ============================================================================
-def compute_dual_network_node_colors(
-    y_activations: np.ndarray,
-    x_activations: np.ndarray,
-    blue_color: np.ndarray = np.array([0.012, 0.376, 1.0]),
-    red_color: np.ndarray = np.array([1.0, 0.164, 0.164]),
-    gray_base: np.ndarray = np.array([0.75, 0.75, 0.75])
-) -> List[Tuple[float, float, float]]:
+
+def select_neurons_by_degree(
+    model: nn.Module,
+    M: int,
+    threshold: float = 0.1,
+    weighted: bool = False
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Compute dual-network node colors: blend blue (y) and red (x).
+    Select top M neurons by degree in Gx = E @ Dx.
 
     Args:
-        y_activations: Normalized y activations [0, 1]
-        x_activations: Normalized x activations [0, 1]
-        blue_color: RGB for y network
-        red_color: RGB for x network
-        gray_base: RGB for inactive state
+        model: BDH model
+        M: Number of neurons to select
+        threshold: Minimum |Gx[i,j]| to count as edge (only used when weighted=False)
+        weighted: If True, use weighted degree (sum of all |Gx|), else count edges above threshold
 
     Returns:
-        List of RGB tuples
+        selected_indices: Array of original neuron indices
+        scores: Degree scores for selected neurons
     """
-    colors = []
-    for y_val, x_val in zip(y_activations, x_activations):
-        total = y_val + x_val
-        if total > 0:
-            # Weighted blend based on activation strengths
-            weight_y = y_val / total
-            weight_x = x_val / total
-            blended_color = weight_y * blue_color + weight_x * red_color
+    with torch.no_grad():
+        H, D, Nh = model.Dx.shape
+        N = H * Nh
 
-            # Interpolate from gray to blended color
-            intensity = max(y_val, x_val)
-            final_color = gray_base + intensity * (blended_color - gray_base)
+        Dx_flat = model.Dx.permute(1, 0, 2).reshape(D, N)
+        Gx = (model.E @ Dx_flat).cpu().numpy()  # (N, N)
+
+        abs_Gx = np.abs(Gx)
+        np.fill_diagonal(abs_Gx, 0)
+
+        if weighted:
+            # Weighted degree: sum of all |Gx| values (no threshold)
+            in_degree = abs_Gx.sum(axis=0)
+            out_degree = abs_Gx.sum(axis=1)
         else:
-            final_color = gray_base
+            # Unweighted degree: count edges above threshold
+            edges = abs_Gx > threshold
+            in_degree = edges.sum(axis=0)
+            out_degree = edges.sum(axis=1)
 
-        colors.append(tuple(final_color))
+        score = in_degree + out_degree
 
-    return colors
+        M = min(M, N)
+        selected_indices = np.argsort(score)[-M:][::-1]
 
-def compute_dual_network_edge_colors_and_widths(
-    activations: np.ndarray,
-    color: np.ndarray,
-    gray_base: np.ndarray = np.array([0.75, 0.75, 0.75]),
-    width_range: Tuple[float, float] = (0.3, 1.5),
-    alpha: float = 0.8
-) -> Tuple[List[Tuple[float, float, float, float]], List[float]]:
+        return selected_indices, score[selected_indices]
+
+
+SELECTION_METHODS = {
+    'degree': lambda m, M, **kw: select_neurons_by_degree(m, M, weighted=False, **kw),
+    'weighted_degree': lambda m, M, **kw: select_neurons_by_degree(m, M, weighted=True, **kw),
+}
+
+
+def select_top_neurons(
+    model: nn.Module,
+    M: int,
+    method: str = 'degree',
+    **kwargs
+) -> Tuple[np.ndarray, Dict[int, int]]:
     """
-    Compute edge colors and widths for dual-network visualization.
+    Select top M neurons using specified method.
 
     Args:
-        activations: Normalized activation values [0, 1]
-        color: Target RGB color (blue or red)
-        gray_base: Base gray RGB
-        width_range: (min_width, max_width)
-        alpha: Alpha channel value
+        model: BDH model
+        M: Number of neurons to select
+        method: One of 'degree', 'weighted_degree'
+        **kwargs: Additional args passed to selection method (e.g., threshold)
 
     Returns:
-        Tuple of (colors, widths)
+        selected_indices: Array of original neuron indices (length M)
+        index_map: Dict mapping original index -> new index (0 to M-1)
     """
-    colors = []
-    widths = []
+    if method not in SELECTION_METHODS:
+        raise ValueError(f"Unknown method: {method}. Choose from {list(SELECTION_METHODS.keys())}")
 
-    for act_val in activations:
-        # Blend from gray to target color (linear interpolation)
-        r = gray_base[0] + act_val * (color[0] - gray_base[0])
-        g = gray_base[1] + act_val * (color[1] - gray_base[1])
-        b = gray_base[2] + act_val * (color[2] - gray_base[2])
-        colors.append((r, g, b, alpha))
+    selector = SELECTION_METHODS[method]
+    selected_indices, _ = selector(model, M, **kwargs)
 
-        # Width proportional to activation
-        width = width_range[0] + act_val * (width_range[1] - width_range[0])
-        widths.append(width)
+    index_map = {orig: new for new, orig in enumerate(selected_indices)}
+    return selected_indices, index_map
 
-    return colors, widths
 
 # ============================================================================
-# Topology Extraction and Graph Building
+# Graph Computation
 # ============================================================================
 
-def get_parameter_topology(model, topology_type: str = 'e_dx') -> torch.Tensor:
+def compute_w_eff(model: nn.Module) -> np.ndarray:
     """
-    Extract N×N topology from model parameters.
+    Compute Gx = E @ Dx - the neuron-to-neuron connectivity graph.
 
-    Args:
-        model: BDH model instance
-        topology_type: 'e_dx', 'dx_coact', or 'dy_coact'
+    This represents the signal flow: y_{l-1} -> E -> v* -> Dx -> x_l
+    Gx[i,j] = how much y[i] contributes to x[j]
 
     Returns:
-        topology: (N, N) tensor with connection strengths
+        Gx: (N, N) numpy array
     """
-    H, D, Nh = model.Dx.shape
-    N = H * Nh
+    with torch.no_grad():
+        H, D, Nh = model.Dx.shape
+        N = H * Nh
 
-    # Reshape Dx and Dy from (H, D, N//H) to (D, N)
-    Dx_reshaped = model.Dx.permute(1, 0, 2).reshape(D, N)
-    Dy_reshaped = model.Dy.permute(1, 0, 2).reshape(D, N)
+        Dx_flat = model.Dx.permute(1, 0, 2).reshape(D, N)
+        Gx = model.E @ Dx_flat  # (N, D) @ (D, N) = (N, N)
 
-    if topology_type == 'e_dx':
-        topology = model.E @ Dx_reshaped
-    elif topology_type == 'dx_coact':
-        topology = Dx_reshaped.T @ Dx_reshaped
-    elif topology_type == 'dy_coact':
-        topology = Dy_reshaped.T @ Dy_reshaped
-    else:
-        raise ValueError(f"Unknown topology_type: {topology_type}")
+        return Gx.detach().cpu().numpy()
 
-    return topology.abs().detach()
 
-def build_topology_graph(
-    topology_matrix: torch.Tensor,
-    top_k_edges: int
-) -> Tuple[List[Tuple[int, int]], np.ndarray]:
+def build_fixed_edges(
+    Gx: np.ndarray,
+    selected_indices: np.ndarray,
+    threshold: float = 0.1,
+    max_edges: int = 2000,
+    min_component_size: int = 5
+) -> Tuple[List[Tuple[int, int]], np.ndarray, np.ndarray]:
     """
-    Build edge list from topology matrix using top-K threshold.
+    Build edge list from Gx connectivity graph.
 
     Args:
-        topology_matrix: (N, N) tensor
-        top_k_edges: Number of strongest edges to keep
+        Gx: (N, N) connectivity matrix
+        selected_indices: Indices of neurons to include
+        threshold: Minimum |Gx| value to include edge
+        max_edges: Cap on total edges
+        min_component_size: Remove components with fewer nodes
 
     Returns:
-        Tuple of (edge_list, edge_weights)
+        edges: List of (src, tgt) in remapped indices
+        weights: Corresponding Gx values
+        kept_indices: Which neurons were kept after filtering
     """
-    topology_np = topology_matrix.cpu().numpy()
-    N = topology_np.shape[0]
+    import networkx as nx
 
-    # Use only upper triangle to avoid duplicates, then pick exact top_k edges
-    iu, ju = np.triu_indices(N, k=1)
-    weights = (topology_np[iu, ju] + topology_np[ju, iu]) / 2  # Symmetrize
+    # Extract submatrix for selected neurons
+    Gx_sub = Gx[np.ix_(selected_indices, selected_indices)]
+    M = len(selected_indices)
 
-    if top_k_edges < len(weights):
-        top_idx = np.argpartition(weights, -top_k_edges)[-top_k_edges:]
-        # Sort selected edges by weight descending for stability
-        top_idx = top_idx[np.argsort(-weights[top_idx])]
-    else:
-        top_idx = np.arange(len(weights))
+    # Find edges above threshold
+    abs_Gx = np.abs(Gx_sub)
+    np.fill_diagonal(abs_Gx, 0)
 
-    edge_list = [(int(iu[k]), int(ju[k])) for k in top_idx]
-    edge_weights = weights[top_idx]
+    rows, cols = np.where(abs_Gx > threshold)
+    edge_weights = Gx_sub[rows, cols]
 
-    return edge_list, edge_weights
+    # Cap edges if too many
+    if len(rows) > max_edges:
+        top_idx = np.argsort(np.abs(edge_weights))[-max_edges:]
+        rows = rows[top_idx]
+        cols = cols[top_idx]
+        edge_weights = edge_weights[top_idx]
 
-def extract_hub_subgraph(
-    edge_list: List[Tuple[int, int]],
-    N: int,
-    min_component_size: int = 1
-) -> Tuple[List[int], dict, List[Tuple[int, int]]]:
-    """
-    Extract connected neurons (hub) and remap edge list, filtering small components.
-
-    Args:
-        edge_list: List of edges with original neuron indices
-        N: Total number of neurons
-        min_component_size: Minimum size of connected components to keep (default: 1 = keep all)
-
-    Returns:
-        Tuple of (connected_neurons, neuron_map, remapped_edges)
-    """
-    # Build temporary graph to find connected components
-    G_temp = nx.Graph()
-    G_temp.add_edges_from(edge_list)
-
-    # Find connected components
-    components = list(nx.connected_components(G_temp))
-
-    # Filter components by size
-    large_components = [comp for comp in components if len(comp) >= min_component_size]
-    small_components = [comp for comp in components if len(comp) < min_component_size]
-
-    # Silently filter small components
-
-    # Collect neurons from large components only
-    connected_neurons = set()
-    for comp in large_components:
-        connected_neurons.update(comp)
-    connected_neurons = sorted(connected_neurons)
-
-    # Create mapping: old_idx → new_idx
-    neuron_map = {old_idx: new_idx for new_idx, old_idx in enumerate(connected_neurons)}
-
-    # Remap edges (only those where both endpoints are in large components)
-    remapped_edges = []
-    for i, j in edge_list:
-        if i in neuron_map and j in neuron_map:
-            remapped_edges.append((neuron_map[i], neuron_map[j]))
-
-    return connected_neurons, neuron_map, remapped_edges
-
-def compute_graph_layout(
-    edges: List[Tuple[int, int]],
-    N: int,
-    seed: int = 42
-) -> dict:
-    """
-    Compute force-directed layout for graph.
-
-    Args:
-        edges: List of edges
-        N: Number of nodes
-        seed: Random seed for reproducibility
-
-    Returns:
-        Position dictionary {node_id: (x, y)}
-    """
+    # Build graph for connected components
     G = nx.Graph()
-    G.add_nodes_from(range(N))
-    G.add_edges_from(edges)
+    G.add_nodes_from(range(M))
+    for r, c in zip(rows, cols):
+        G.add_edge(int(r), int(c))
 
-    pos = nx.spring_layout(G, k=1/np.sqrt(N), iterations=50, seed=seed)
-    return pos
+    # Filter small components
+    components = list(nx.connected_components(G))
+    large_components = [c for c in components if len(c) >= min_component_size]
 
-# ============================================================================
-# Edge Activation Computation
-# ============================================================================
+    if not large_components and components:
+        large_components = [max(components, key=len)]
 
-def compute_edge_activations_signal_flow(
-    edge_list: List[Tuple[int, int]],
-    source_activations: np.ndarray,
-    topology_matrix: np.ndarray,
-    target_activations: Optional[np.ndarray] = None
+    kept_nodes = set()
+    for comp in large_components:
+        kept_nodes.update(comp)
+
+    # Remap indices
+    kept_nodes_sorted = sorted(kept_nodes)
+    old_to_new = {old: new for new, old in enumerate(kept_nodes_sorted)}
+
+    final_edges = []
+    final_weights = []
+    for idx, (r, c) in enumerate(zip(rows, cols)):
+        if r in kept_nodes and c in kept_nodes:
+            final_edges.append((old_to_new[r], old_to_new[c]))
+            final_weights.append(edge_weights[idx])
+
+    kept_original_indices = selected_indices[kept_nodes_sorted]
+
+    return final_edges, np.array(final_weights), kept_original_indices
+
+
+def compute_force_layout(
+    edges: List[Tuple[int, int]],
+    weights: np.ndarray,
+    M: int,
+    seed: int = 42,
+    iterations: int = 100
 ) -> np.ndarray:
     """
-    Compute causal signal flow.
-    If target_activations is provided: Flow = |Source * W * Target| (Successful transmission)
-    If not: Flow = |Source * W| (Broadcast magnitude)
-    """
-    activations = []
-    for i, j in edge_list:
-        # i -> j
-        flow_i_to_j = abs(source_activations[i] * topology_matrix[i, j])
-        # j -> i
-        flow_j_to_i = abs(source_activations[j] * topology_matrix[j, i])
-
-        # Gate by target activation if provided
-        if target_activations is not None:
-            flow_i_to_j *= target_activations[j]  # Target is j
-            flow_j_to_i *= target_activations[i]  # Target is i
-
-        activations.append((flow_i_to_j + flow_j_to_i) / 2)
-    return np.array(activations)
-
-def compute_edge_activations_coactivation(
-    edge_list: List[Tuple[int, int]],
-    activations: np.ndarray
-) -> np.ndarray:
-    """Compute edge activations using co-activation (product of node activations)."""
-    edge_activations = []
-    for i, j in edge_list:
-        co_activation = activations[i] * activations[j]
-        edge_activations.append(co_activation)
-    return np.array(edge_activations)
-
-# ============================================================================
-# Board Visualization
-# ============================================================================
-
-def generate_board_frames(
-    output_frames: List[torch.Tensor],
-    board_size: int
-) -> List[Image.Image]:
-    """
-    Generate PIL images of board predictions through layers.
+    Compute 2D force-directed layout using networkx.
 
     Args:
-        output_frames: List of tensors, each shape (T,) with predicted tokens
-        board_size: Size of the board (e.g., 8 for 8x8)
+        edges: List of (src, tgt) edge tuples
+        weights: Edge weights
+        M: Number of nodes
+        seed: Random seed
+        iterations: Number of layout iterations
 
     Returns:
-        List of PIL Image objects
+        positions: (M, 2) array of 2D coordinates
     """
-    # Define colors: FLOOR=0, WALL=1, START=2, END=3, PATH=4
-    cmap = ListedColormap(['white', 'black', 'lime', 'red', 'gold'])
+    import networkx as nx
 
-    images = []
-    for layer_idx, frame in enumerate(output_frames):
-        fig, ax = plt.subplots(figsize=(8, 8))
-        board = frame.cpu().numpy().reshape(board_size, board_size)
+    G = nx.Graph()
+    G.add_nodes_from(range(M))
 
-        # Display board
-        im = ax.imshow(board, cmap=cmap, vmin=0, vmax=4, interpolation='nearest')
+    for idx, (src, tgt) in enumerate(edges):
+        if idx < len(weights):
+            G.add_edge(src, tgt, weight=weights[idx])
 
-        # Add grid
-        ax.set_xticks(np.arange(-.5, board_size, 1), minor=True)
-        ax.set_yticks(np.arange(-.5, board_size, 1), minor=True)
-        ax.grid(which='minor', color='gray', linestyle='-', linewidth=1)
-        ax.tick_params(which='minor', size=0)
-        ax.set_xticks([])
-        ax.set_yticks([])
+    pos_dict = nx.spring_layout(
+        G,
+        k=2.0 / np.sqrt(M),
+        iterations=iterations,
+        seed=seed,
+        weight='weight'
+    )
 
-        # Title
-        ax.set_title(f'Predictions - layer: {layer_idx}', fontsize=18, fontweight='bold', pad=20)
+    positions = np.array([pos_dict[i] for i in range(M)])
 
-        # Legend
-        legend_elements = [
-            plt.Rectangle((0, 0), 1, 1, fc='white', ec='black', label='Floor'),
-            plt.Rectangle((0, 0), 1, 1, fc='black', label='Wall'),
-            plt.Rectangle((0, 0), 1, 1, fc='lime', label='Start'),
-            plt.Rectangle((0, 0), 1, 1, fc='red', label='End'),
-            plt.Rectangle((0, 0), 1, 1, fc='gold', label='Path'),
-        ]
-        ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1),
-                  fontsize=12, frameon=True)
+    # Normalize to [-1, 1]
+    for dim in range(2):
+        min_val = positions[:, dim].min()
+        max_val = positions[:, dim].max()
+        if max_val - min_val > 1e-8:
+            positions[:, dim] = 2 * (positions[:, dim] - min_val) / (max_val - min_val) - 1
 
-        add_watermark(fig, ax)
-        plt.tight_layout()
+    return positions
 
-        images.append(fig_to_pil_image(fig))
-
-    return images
 
 # ============================================================================
-# Combined Processing Visualization (board + dual graph)
+# Neuron Panel Visualization
 # ============================================================================
 
-def generate_processing_frames(
-    output_frames: List[torch.Tensor],
+def draw_neuron_panel(
+    ax,
+    positions: np.ndarray,
+    edges: List[Tuple[int, int]],
+    edge_weights: np.ndarray,
+    x_activations: np.ndarray,
+    y_prev_activations: np.ndarray,
+    layer_idx: int,
+    M_neurons: int,
+    N_total: int
+):
+    """
+    Draw neuron map with Gx edges and dynamic activations.
+
+    Args:
+        ax: Matplotlib axis
+        positions: (M, 2) array of neuron positions
+        edges: List of (src, tgt) tuples
+        edge_weights: Gx[src,tgt] values
+        x_activations: (M,) current x activations
+        y_prev_activations: (M,) previous y activations
+        layer_idx: Current layer index
+        M_neurons: Number of neurons shown
+        N_total: Total neurons in model
+    """
+    M = len(positions)
+
+    # Normalize activations
+    x_norm = normalize_robust(x_activations)
+    y_norm = normalize_robust(y_prev_activations)
+
+    gray_base = np.array([0.8, 0.8, 0.8])
+    red_color = np.array([1.0, 0.2, 0.2])
+    blue_color = np.array([0.0, 0.4, 1.0])
+
+    # Compute flow: y_prev[src] * Gx[src,tgt] * x[tgt]
+    edge_flows = []
+    for idx, (src, tgt) in enumerate(edges):
+        flow = y_prev_activations[src] * edge_weights[idx] * x_activations[tgt]
+        edge_flows.append(max(0, flow))
+
+    edge_flows = np.array(edge_flows) if edge_flows else np.array([])
+    flow_norm = normalize_robust(edge_flows) if len(edge_flows) > 0 else np.array([])
+
+    # Draw edges
+    active_edge_count = 0
+    for idx, (src, tgt) in enumerate(edges):
+        flow_val = flow_norm[idx] if idx < len(flow_norm) else 0
+
+        gray_level = 0.7 * (1 - flow_val)
+        width = 0.4 + 1.0 * flow_val
+        alpha = 0.5 + 0.5 * flow_val
+
+        color = (gray_level, gray_level, gray_level, alpha)
+
+        if flow_val > 0.05:
+            active_edge_count += 1
+
+        ax.plot(
+            [positions[src, 0], positions[tgt, 0]],
+            [positions[src, 1], positions[tgt, 1]],
+            color=color,
+            linewidth=width,
+            zorder=1 + flow_val
+        )
+
+    # Draw nodes
+    node_colors = []
+    ring_colors = []
+    ring_widths = []
+
+    for i in range(M):
+        x_val = x_norm[i]
+        fill_color = (1 - x_val) * gray_base + x_val * red_color
+        node_colors.append(fill_color)
+
+        ring_colors.append((*blue_color, y_norm[i]))
+        ring_widths.append(2.5 * y_norm[i])
+
+    ax.scatter(
+        positions[:, 0], positions[:, 1],
+        c=node_colors,
+        s=40,
+        edgecolors=[rc[:3] for rc in ring_colors],
+        linewidths=ring_widths,
+        zorder=3
+    )
+
+    ax.set_xlim(-1.2, 1.2)
+    ax.set_ylim(-1.2, 1.2)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.set_title(f'Neuron Dynamics - Layer {layer_idx}', fontsize=12, fontweight='bold')
+
+    # Legend
+    legend_text = (
+        f'Blue ring: y_{{l-1}} (source)\n'
+        f'Gray->Black: signal flow\n'
+        f'Red fill: x_l (destination)\n'
+        f'Active edges: {active_edge_count}\n'
+        f'Neurons: {M_neurons}/{N_total}'
+    )
+    ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
+           fontsize=8, verticalalignment='bottom',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+           family='monospace')
+
+
+# ============================================================================
+# Animation Generator
+# ============================================================================
+
+def generate_neuron_animation(
     x_frames: List[torch.Tensor],
     y_frames: List[torch.Tensor],
-    model,
-    board_size: int,
-    top_k_edges: int = 500,
-    layout_seed: int = 42,
-    min_component_size: int = 10
+    model: nn.Module,
+    config: Optional[Dict] = None,
+    selection_method: str = 'degree'
 ) -> List[Image.Image]:
     """
-    Build per-layer panels showing:
-    1) Board prediction
-    2) Dual fixed graphs lit by current activations (Dy co-activation in blue, E@Dx flow in red)
+    Generate neuron dynamics animation.
+
+    Args:
+        x_frames: List of x activation tensors per layer, shape (T, N)
+        y_frames: List of y activation tensors per layer, shape (T, N)
+        model: BDH model instance
+        config: Visualization configuration dict
+        selection_method: 'degree' or 'weighted_degree'
+
+    Returns:
+        List of PIL images for animation
     """
-    cmap_board = ListedColormap(['white', 'black', 'lime', 'red', 'gold'])
+    cfg = {**DEFAULT_CONFIG, **(config or {})}
+    L = len(x_frames)
+    N = model.N
 
-    # Fixed topologies
-    topology_dx = get_parameter_topology(model, topology_type='e_dx')
-    topology_dy = get_parameter_topology(model, topology_type='dy_coact')
-    N = topology_dx.shape[0]
+    # Select neurons
+    print(f"  Selecting neurons using '{selection_method}'...")
+    candidate_indices, _ = select_top_neurons(
+        model, cfg['M_neurons'],
+        method=selection_method,
+        threshold=cfg['w_eff_threshold']
+    )
+    print(f"    {len(candidate_indices)} candidates out of {N}")
 
-    edges_dx, _ = build_topology_graph(topology_dx, top_k_edges)
-    edges_dy, _ = build_topology_graph(topology_dy, top_k_edges)
+    # Compute Gx
+    print("  Computing Gx = E @ Dx...")
+    Gx = compute_w_eff(model)
 
-    all_edges = edges_dx + edges_dy
-    connected_neurons, neuron_map, _ = extract_hub_subgraph(all_edges, N, min_component_size)
+    # Build edges
+    min_comp = cfg.get('min_component_size', 5)
+    print(f"  Building edges (threshold={cfg['w_eff_threshold']}, min_component={min_comp})...")
+    edges, edge_weights, selected_indices = build_fixed_edges(
+        Gx,
+        candidate_indices,
+        threshold=cfg['w_eff_threshold'],
+        max_edges=cfg['max_edges'],
+        min_component_size=min_comp
+    )
+    M = len(selected_indices)
+    print(f"    {len(edges)} edges, {M} neurons after filtering")
 
-    if len(connected_neurons) == 0:
-        connected_neurons = list(range(N))
-        neuron_map = {i: i for i in connected_neurons}
+    # Compute layout
+    print("  Computing layout...")
+    positions = compute_force_layout(
+        edges,
+        np.abs(edge_weights),
+        M,
+        seed=cfg['layout_seed'],
+        iterations=150
+    )
 
-    edges_dx_hub = []
-    for (i, j) in edges_dx:
-        if i in neuron_map and j in neuron_map:
-            edges_dx_hub.append((neuron_map[i], neuron_map[j]))
-
-    edges_dy_hub = []
-    for (i, j) in edges_dy:
-        if i in neuron_map and j in neuron_map:
-            edges_dy_hub.append((neuron_map[i], neuron_map[j]))
-
-    N_viz = len(connected_neurons)
-    all_edges_hub = edges_dx_hub + edges_dy_hub
-    pos = compute_graph_layout(all_edges_hub, N_viz, layout_seed)
-
-    topology_dx_np = topology_dx.cpu().numpy()
-    topology_dx_subset = topology_dx_np[np.ix_(connected_neurons, connected_neurons)]
-
-    red_color = np.array([1.0, 0.164, 0.164])   # #FF2A2A
-    blue_color = np.array([0.012, 0.376, 1.0])  # #0360FF
-    gray_base = np.array([0.75, 0.75, 0.75])
-
+    # Generate frames
+    print("  Generating frames...")
     images = []
-    for layer_idx, board_tokens in enumerate(output_frames):
-        fig, axes = plt.subplots(1, 2, figsize=(14, 7))
 
-        # ------------------------------------------------------------------
-        # Panel 1: Board prediction
-        # ------------------------------------------------------------------
-        board = board_tokens.cpu().numpy().reshape(board_size, board_size)
-        axes[0].imshow(board, cmap=cmap_board, vmin=0, vmax=4, interpolation='nearest')
-        axes[0].set_xticks([])
-        axes[0].set_yticks([])
-        axes[0].set_title(f'Board prediction - layer {layer_idx}', fontsize=14, fontweight='bold')
+    for layer_idx in range(L):
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
-        # ------------------------------------------------------------------
-        # Panel 2: Dual fixed graphs lit by activations
-        # ------------------------------------------------------------------
-        x_full = x_frames[layer_idx].cpu().numpy()
-        x_act = x_full[connected_neurons]
+        # Get activations (average over tokens)
+        x_full = x_frames[layer_idx].cpu().numpy()  # (T, N)
+        x_act = x_full.mean(axis=0)[selected_indices]
 
-        if layer_idx == 0:
-            y_prev_act = np.zeros_like(x_act)
+        if layer_idx > 0:
+            y_full = y_frames[layer_idx - 1].cpu().numpy()
+            y_prev = y_full.mean(axis=0)[selected_indices]
         else:
-            y_prev_full = y_frames[layer_idx - 1].cpu().numpy()
-            y_prev_act = y_prev_full[connected_neurons]
+            y_prev = np.zeros_like(x_act)
 
-        # Blue edges: co-activation of y_{l-1}
-        edge_act_dy = compute_edge_activations_coactivation(edges_dy_hub, y_prev_act) if len(edges_dy_hub) > 0 else np.array([])
-        # Red edges: flow y_{l-1} -> x_l via E@Dx (broadcast magnitude; no gating by x)
-        edge_act_dx = compute_edge_activations_signal_flow(
-            edges_dx_hub,
-            source_activations=y_prev_act,
-            topology_matrix=topology_dx_subset,
-            target_activations=None
-        ) if len(edges_dx_hub) > 0 else np.array([])
-
-        edge_act_dy_norm = normalize_array(edge_act_dy) if edge_act_dy.size > 0 else np.array([])
-        edge_act_dx_norm = normalize_array(edge_act_dx) if edge_act_dx.size > 0 else np.array([])
-
-        y_norm = normalize_array(y_prev_act)
-        x_norm = normalize_array(x_act)
-
-        node_colors = compute_dual_network_node_colors(y_norm, x_norm, blue_color, red_color, gray_base)
-        node_size_range = (5, 40)
-        node_sizes = [node_size_range[0] + max_val * (node_size_range[1] - node_size_range[0])
-                      for max_val in np.maximum(y_norm, x_norm)]
-
-        G = nx.Graph()
-        G.add_nodes_from(range(N_viz))
-        G.add_edges_from(all_edges_hub)
-
-        # Blue edges (Dy co-activation) drawn first (precursor to x)
-        edge_colors_dy, edge_widths_dy = compute_dual_network_edge_colors_and_widths(
-            edge_act_dy_norm, blue_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
+        draw_neuron_panel(
+            ax,
+            positions,
+            edges,
+            edge_weights,
+            x_act,
+            y_prev,
+            layer_idx,
+            M,
+            N
         )
-        if len(edges_dy_hub) > 0:
-            nx.draw_networkx_edges(
-                G, pos, ax=axes[1],
-                edgelist=edges_dy_hub,
-                edge_color=edge_colors_dy,
-                width=edge_widths_dy
-            )
 
-        # Red edges (Dx flow) drawn after (destination / update path)
-        edge_colors_dx, edge_widths_dx = compute_dual_network_edge_colors_and_widths(
-            edge_act_dx_norm, red_color, gray_base, width_range=(0.4, 2.0), alpha=0.9
-        )
-        if len(edges_dx_hub) > 0:
-            nx.draw_networkx_edges(
-                G, pos, ax=axes[1],
-                edgelist=edges_dx_hub,
-                edge_color=edge_colors_dx,
-                width=edge_widths_dx
-            )
-
-        nx.draw_networkx_nodes(
-            G, pos, ax=axes[1],
-            node_color=node_colors,
-            node_size=node_sizes,
-            edgecolors='none'
-        )
-        axes[1].set_title(f'Fixed graphs lit by activations - layer {layer_idx}', fontsize=14, fontweight='bold')
-        axes[1].axis('off')
-
-        legend_text = 'Blue: y_{l-1} co-activation (Dy)\n'
-        legend_text += 'Red: y_{l-1} → x_l flow (E@Dx)\n'
-        legend_text += f'Hub neurons: {N_viz}/{N}'
-
-        axes[1].text(0.02, 0.02, legend_text, transform=axes[1].transAxes,
-                     fontsize=10, verticalalignment='bottom',
-                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
-                     family='monospace')
-
-        add_watermark(fig, axes[1])
         plt.tight_layout()
-
         images.append(fig_to_pil_image(fig))
 
+    print(f"  Generated {len(images)} frames")
     return images

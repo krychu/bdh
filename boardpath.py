@@ -183,27 +183,15 @@ def run_inference(path: str):
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
 
     print("\nGenerating visualizations...")
-    from utils.visualize_v2 import (
-        generate_two_panel_animation,
-        save_gif
-    )
+    from utils.visualize import generate_neuron_animation, save_gif
 
-    # New two-panel visualization
-    images = generate_two_panel_animation(
-        input_board=input_board,
-        target_board=target_board,
-        output_frames=output_frames,
+    images = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
-        attn_frames=attn_frames,
-        logits_frames=logits_frames,
         model=bdh,
-        board_size=boardpath_params.board_size,
         config={
             'M_neurons': 300,
-            'k_attn': 2,
-            'w_min': 0.05,
-            'w_eff_threshold': 0.125,  # Only show |Gx| > 0.125 edges
+            'w_eff_threshold': 0.125,
             'max_edges': 2000,
             'min_component_size': 10,
         }
