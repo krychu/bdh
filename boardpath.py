@@ -186,8 +186,11 @@ def run_inference(path: str):
     from utils.visualize import (
         generate_neuron_animation,
         generate_board_attention_frames,
-        generate_neural_activity_frames,
+        generate_simple_board_frames,
+        generate_animated_sparsity_frames,
         generate_sparsity_chart,
+        combine_frames_side_by_side,
+        add_watermark_to_frames,
         save_gif
     )
     import numpy as np
@@ -200,46 +203,58 @@ def run_inference(path: str):
         target_flat = target_board.flatten().numpy()
         token_mask = target_flat >= START  # START=2, END=3, PATH=4
 
-    # 1. Original Gx-based neuron dynamics visualization
-    print("\n[1/4] Neuron dynamics (Gx graph)...")
-    images = generate_neuron_animation(
+    # 1. Neuron dynamics (Gx graph)
+    print("\n[1/5] Neuron dynamics (Gx graph)...")
+    neuron_frames = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
         model=bdh,
         token_mask=token_mask
     )
-    save_gif(images, 'bdh_visualization.gif', duration=500)
 
-    # 2. Board attention animation
-    print("\n[2/4] Board attention...")
-    board_images = generate_board_attention_frames(
+    # 2. Simple board predictions
+    print("\n[2/5] Simple board predictions...")
+    simple_board_frames = generate_simple_board_frames(
+        output_frames=output_frames,
+        prob_frames=logits_frames,
+        board_size=boardpath_params.board_size
+    )
+
+    # 3. Board attention (full detail)
+    print("\n[3/5] Board attention (full detail)...")
+    attention_board_frames = generate_board_attention_frames(
         output_frames=output_frames,
         attn_frames=attn_frames,
-        prob_frames=logits_frames,  # logits_frames contains probabilities after softmax
+        prob_frames=logits_frames,
         x_frames=x_frames,
         board_size=boardpath_params.board_size,
         input_board=input_board.flatten()
     )
-    save_gif(board_images, 'board_attention.gif', duration=500)
 
-    # 3. Neural activity UMAP animation
-    print("\n[3/4] Neural activity (UMAP)...")
-    neural_images = generate_neural_activity_frames(
-        y_frames=y_frames,
-        model=bdh,
-        target_board=target_board.flatten()
-    )
-    save_gif(neural_images, 'neural_activity.gif', duration=500)
+    # 4. Animated sparsity chart
+    print("\n[4/5] Animated sparsity chart...")
+    sparsity_frames = generate_animated_sparsity_frames(x_frames, y_frames)
 
-    # 4. Sparsity chart
-    print("\n[4/4] Sparsity chart...")
+    # 5. Combine into final GIFs
+    print("\n[5/5] Combining visualizations...")
+
+    # GIF 1: Board (simple) + Neuron dynamics
+    combined_hero = combine_frames_side_by_side(simple_board_frames, neuron_frames)
+    combined_hero = add_watermark_to_frames(combined_hero)
+    save_gif(combined_hero, 'combined_board_neuron.gif', duration=500)
+
+    # GIF 2: Board attention + Animated sparsity
+    combined_detail = combine_frames_side_by_side(attention_board_frames, sparsity_frames)
+    combined_detail = add_watermark_to_frames(combined_detail)
+    save_gif(combined_detail, 'combined_attention_sparsity.gif', duration=500)
+
+    # Also save static sparsity chart
     generate_sparsity_chart(x_frames, y_frames, 'sparsity_chart.png')
 
     print("\nVisualization files:")
-    print("  bdh_visualization.gif - Neuron dynamics with Gx connectivity")
-    print("  board_attention.gif   - Board predictions + attention + x activity")
-    print("  neural_activity.gif   - UMAP neural activity (y activations)")
-    print("  sparsity_chart.png    - x/y sparsity across layers")
+    print("  combined_board_neuron.gif      - Board predictions + Neuron dynamics (hero)")
+    print("  combined_attention_sparsity.gif - Board attention + Sparsity animation")
+    print("  sparsity_chart.png              - Static sparsity summary")
     print()
 
 def set_all_seeds(seed: int):

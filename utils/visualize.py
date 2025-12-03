@@ -65,6 +65,66 @@ def save_gif(images: List[Image.Image], save_path: str, duration: int = 500):
     )
 
 
+def add_watermark_to_frames(
+    frames: List[Image.Image],
+    text: str = "https://github.com/krychu/bdh",
+    padding: int = 10,
+    font_size: int = 14,
+    opacity: float = 0.6
+) -> List[Image.Image]:
+    """
+    Add watermark text to bottom-right corner of each frame.
+
+    Args:
+        frames: List of PIL Images
+        text: Watermark text
+        padding: Pixels from edge
+        font_size: Font size (approximate, uses default font)
+        opacity: Text opacity (0-1)
+
+    Returns:
+        List of watermarked PIL Images
+    """
+    from PIL import ImageDraw, ImageFont
+
+    # Try to get a monospace font, fall back to default
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Monaco.dfont", font_size)
+    except (OSError, IOError):
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", font_size)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+
+    watermarked = []
+    for frame in frames:
+        # Convert to RGBA for transparency handling
+        img = frame.convert("RGBA")
+
+        # Create transparent overlay for text
+        overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        # Get text bounding box
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        # Position in bottom-right
+        x = img.width - text_w - padding
+        y = img.height - text_h - padding
+
+        # Draw text with opacity
+        alpha = int(255 * opacity)
+        draw.text((x, y), text, font=font, fill=(80, 80, 80, alpha))
+
+        # Composite and convert back to RGB
+        img = Image.alpha_composite(img, overlay)
+        watermarked.append(img.convert("RGB"))
+
+    return watermarked
+
+
 def normalize_robust(arr: np.ndarray, percentile_low: float = 5, percentile_high: float = 95) -> np.ndarray:
     """Normalize array using robust percentile-based normalization."""
     if arr.size == 0:
@@ -886,6 +946,242 @@ def generate_neural_activity_frames(
         images.append(fig_to_pil_image(fig))
 
     return images
+
+
+# ============================================================================
+# Sparsity Chart (Static PNG)
+# ============================================================================
+
+# ============================================================================
+# Simple Board Animation (no arrows/dots)
+# ============================================================================
+
+def generate_simple_board_frames(
+    output_frames: List[torch.Tensor],
+    prob_frames: List[torch.Tensor],
+    board_size: int
+) -> List[Image.Image]:
+    """
+    Generate simple board animation showing only predictions (no attention/dots).
+
+    Args:
+        output_frames: List of (T,) tensors with predicted tokens per layer
+        prob_frames: List of (T, V) tensors with class probabilities per layer
+        board_size: Board size (e.g., 10)
+
+    Returns:
+        List of PIL Images
+    """
+    T = board_size * board_size
+
+    colors = {
+        FLOOR: np.array([0.95, 0.95, 0.95]),
+        WALL: np.array([0.15, 0.15, 0.15]),
+        START: np.array([0.2, 0.8, 0.2]),
+        END: np.array([0.9, 0.2, 0.2]),
+        PATH: np.array([1.0, 0.84, 0.0]),
+    }
+
+    images = []
+    n_layers = len(output_frames)
+
+    for layer_idx in range(n_layers):
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        predictions = output_frames[layer_idx]
+        logits = prob_frames[layer_idx]
+
+        # Squeeze batch dimension if present
+        if logits.dim() == 3:
+            logits = logits.squeeze(0)
+
+        # Get PATH probabilities for shading
+        if torch.is_tensor(logits):
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        else:
+            probs = np.exp(logits) / np.exp(logits).sum(axis=-1, keepdims=True)
+        path_probs = probs[:, PATH]
+
+        # Create board image from predictions
+        pred_np = predictions.cpu().numpy() if torch.is_tensor(predictions) else predictions
+        board_img = np.zeros((board_size, board_size, 3))
+        for i in range(T):
+            row, col = i // board_size, i % board_size
+            cell_val = int(pred_np[i])
+            base_color = colors.get(cell_val, colors[FLOOR])
+
+            # Shade PATH cells by confidence
+            if cell_val == PATH:
+                confidence = path_probs[i] ** 2
+                board_img[row, col] = base_color * confidence + colors[FLOOR] * (1 - confidence)
+            else:
+                board_img[row, col] = base_color
+
+        ax.imshow(board_img, interpolation='nearest')
+
+        # Add grid
+        for i in range(board_size + 1):
+            ax.axhline(i - 0.5, color='gray', linewidth=0.5, alpha=0.3)
+            ax.axvline(i - 0.5, color='gray', linewidth=0.5, alpha=0.3)
+
+        ax.set_xlim(-0.5, board_size - 0.5)
+        ax.set_ylim(board_size - 0.5, -0.5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(f'Board Predictions - Layer {layer_idx}', fontsize=12, fontweight='bold')
+
+        # Legend
+        legend_text = 'Gold: PATH\nGreen: START\nRed: END'
+        ax.text(0.02, 0.02, legend_text, transform=ax.transAxes,
+               fontsize=8, verticalalignment='bottom',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+               family='monospace')
+
+        plt.tight_layout()
+        images.append(fig_to_pil_image(fig))
+
+    return images
+
+
+# ============================================================================
+# Animated Sparsity Chart
+# ============================================================================
+
+def generate_animated_sparsity_frames(
+    x_frames: List[torch.Tensor],
+    y_frames: List[torch.Tensor]
+) -> List[Image.Image]:
+    """
+    Generate animated sparsity chart with layer indicator.
+
+    Args:
+        x_frames: List of (T, N) tensors with x activations per layer
+        y_frames: List of (T, N) tensors with y activations per layer
+
+    Returns:
+        List of PIL Images (one per layer)
+    """
+    n_layers = len(y_frames)
+
+    # Compute per-cell sparsity stats for y
+    y_avg, y_min, y_max = [], [], []
+    for layer_idx in range(n_layers):
+        y_act = y_frames[layer_idx].cpu().numpy()
+        per_cell = (y_act > 0).mean(axis=1) * 100
+        y_avg.append(per_cell.mean())
+        y_min.append(per_cell.min())
+        y_max.append(per_cell.max())
+
+    # Compute for x
+    x_avg, x_min, x_max = [], [], []
+    for layer_idx in range(n_layers):
+        x_act = x_frames[layer_idx].cpu().numpy()
+        per_cell = (x_act > 0).mean(axis=1) * 100
+        x_avg.append(per_cell.mean())
+        x_min.append(per_cell.min())
+        x_max.append(per_cell.max())
+
+    layers = list(range(n_layers))
+    images = []
+
+    for current_layer in range(n_layers):
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        # x activations (red)
+        ax.fill_between(layers, x_min, x_max, color='red', alpha=0.15)
+        ax.plot(layers, x_avg, 'r-', linewidth=2, label='x (gate)')
+        ax.scatter(layers, x_avg, color='red', s=30, zorder=5)
+
+        # y activations (blue)
+        ax.fill_between(layers, y_min, y_max, color='blue', alpha=0.15)
+        ax.plot(layers, y_avg, 'b-', linewidth=2, label='y (signal)')
+        ax.scatter(layers, y_avg, color='blue', s=30, zorder=5)
+
+        # Current layer indicator - vertical line
+        ax.axvline(x=current_layer, color='black', linewidth=2, linestyle='--', alpha=0.7)
+
+        # Highlight current points
+        ax.scatter([current_layer], [x_avg[current_layer]], color='red', s=150,
+                  edgecolors='black', linewidths=2, zorder=10)
+        ax.scatter([current_layer], [y_avg[current_layer]], color='blue', s=150,
+                  edgecolors='black', linewidths=2, zorder=10)
+
+        ax.set_xlabel('Layer', fontsize=11)
+        ax.set_ylabel('% Neurons Active', fontsize=11)
+        ax.set_title(f'Sparsity - Layer {current_layer}', fontsize=12, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(-0.5, n_layers - 0.5)
+        ax.set_xticks(layers)
+        ax.set_ylim(0, max(max(x_max), 100) * 1.05)
+
+        # Stats box
+        stats_text = (
+            f'x: {x_avg[current_layer]:.1f}%\n'
+            f'y: {y_avg[current_layer]:.1f}%'
+        )
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+               fontsize=10, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+               family='monospace')
+
+        plt.tight_layout()
+        images.append(fig_to_pil_image(fig))
+
+    return images
+
+
+# ============================================================================
+# Side-by-Side GIF Combiner
+# ============================================================================
+
+def combine_frames_side_by_side(
+    left_frames: List[Image.Image],
+    right_frames: List[Image.Image],
+    gap: int = 20,
+    background_color: Tuple[int, int, int] = (255, 255, 255)
+) -> List[Image.Image]:
+    """
+    Combine two lists of frames side by side.
+
+    Args:
+        left_frames: List of PIL Images for left panel
+        right_frames: List of PIL Images for right panel
+        gap: Pixel gap between panels
+        background_color: RGB tuple for gap color
+
+    Returns:
+        List of combined PIL Images
+    """
+    if len(left_frames) != len(right_frames):
+        raise ValueError(f"Frame count mismatch: {len(left_frames)} vs {len(right_frames)}")
+
+    combined = []
+    for left, right in zip(left_frames, right_frames):
+        # Resize to same height if needed
+        left_w, left_h = left.size
+        right_w, right_h = right.size
+
+        if left_h != right_h:
+            # Scale to match heights
+            target_h = max(left_h, right_h)
+            if left_h != target_h:
+                scale = target_h / left_h
+                left = left.resize((int(left_w * scale), target_h), Image.Resampling.LANCZOS)
+                left_w, left_h = left.size
+            if right_h != target_h:
+                scale = target_h / right_h
+                right = right.resize((int(right_w * scale), target_h), Image.Resampling.LANCZOS)
+                right_w, right_h = right.size
+
+        # Create combined image
+        total_w = left_w + gap + right_w
+        combined_img = Image.new('RGB', (total_w, left_h), background_color)
+        combined_img.paste(left, (0, 0))
+        combined_img.paste(right, (left_w + gap, 0))
+        combined.append(combined_img)
+
+    return combined
 
 
 # ============================================================================
