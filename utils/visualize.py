@@ -432,7 +432,8 @@ def generate_neuron_animation(
     y_frames: List[torch.Tensor],
     model: nn.Module,
     config: Optional[Dict] = None,
-    selection_method: str = 'degree'
+    selection_method: str = 'degree',
+    token_mask: Optional[np.ndarray] = None
 ) -> List[Image.Image]:
     """
     Generate neuron dynamics animation.
@@ -443,6 +444,9 @@ def generate_neuron_animation(
         model: BDH model instance
         config: Visualization configuration dict
         selection_method: 'degree' or 'weighted_degree'
+        token_mask: Optional boolean array of shape (T,) to filter which tokens
+                    to include when averaging activations. If None, all tokens used.
+                    Use this to focus on path cells only.
 
     Returns:
         List of PIL images for animation
@@ -477,6 +481,13 @@ def generate_neuron_animation(
     M = len(selected_indices)
     print(f"    {len(edges)} edges, {M} neurons after filtering")
 
+    # Report token masking
+    if token_mask is not None:
+        n_masked = token_mask.sum()
+        print(f"  Using token mask: {n_masked}/{len(token_mask)} tokens (path cells only)")
+    else:
+        print("  Using all tokens")
+
     # Compute layout (force-directed)
     print("  Computing force layout...")
     positions = compute_force_layout(
@@ -494,13 +505,19 @@ def generate_neuron_animation(
     for layer_idx in range(L):
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
-        # Get activations (average over tokens)
+        # Get activations (average over tokens, optionally masked)
         x_full = x_frames[layer_idx].cpu().numpy()  # (T, N)
-        x_act = x_full.mean(axis=0)[selected_indices]
+        if token_mask is not None:
+            x_act = x_full[token_mask].mean(axis=0)[selected_indices]
+        else:
+            x_act = x_full.mean(axis=0)[selected_indices]
 
         if layer_idx > 0:
             y_full = y_frames[layer_idx - 1].cpu().numpy()
-            y_prev = y_full.mean(axis=0)[selected_indices]
+            if token_mask is not None:
+                y_prev = y_full[token_mask].mean(axis=0)[selected_indices]
+            else:
+                y_prev = y_full.mean(axis=0)[selected_indices]
         else:
             y_prev = np.zeros_like(x_act)
 

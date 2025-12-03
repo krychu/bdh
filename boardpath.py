@@ -184,11 +184,21 @@ def run_inference(path: str):
 
     print("\nGenerating visualizations...")
     from utils.visualize import generate_neuron_animation, save_gif
+    import numpy as np
+
+    # Set to True to only average activations over path cells (START, END, PATH)
+    USE_PATH_MASK = False
+
+    token_mask = None
+    if USE_PATH_MASK:
+        target_flat = target_board.flatten().numpy()
+        token_mask = target_flat >= START  # START=2, END=3, PATH=4
 
     images = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
-        model=bdh
+        model=bdh,
+        token_mask=token_mask
     )
 
     save_gif(images, 'bdh_visualization.gif', duration=500)
