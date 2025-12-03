@@ -183,7 +183,13 @@ def run_inference(path: str):
     print("\nLegend: . = Floor, # = Wall, S = Start, E = End, * = Path")
 
     print("\nGenerating visualizations...")
-    from utils.visualize import generate_neuron_animation, save_gif
+    from utils.visualize import (
+        generate_neuron_animation,
+        generate_board_attention_frames,
+        generate_neural_activity_frames,
+        generate_sparsity_chart,
+        save_gif
+    )
     import numpy as np
 
     # Set to True to only average activations over path cells (START, END, PATH)
@@ -194,17 +200,46 @@ def run_inference(path: str):
         target_flat = target_board.flatten().numpy()
         token_mask = target_flat >= START  # START=2, END=3, PATH=4
 
+    # 1. Original Gx-based neuron dynamics visualization
+    print("\n[1/4] Neuron dynamics (Gx graph)...")
     images = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
         model=bdh,
         token_mask=token_mask
     )
-
     save_gif(images, 'bdh_visualization.gif', duration=500)
 
+    # 2. Board attention animation
+    print("\n[2/4] Board attention...")
+    board_images = generate_board_attention_frames(
+        output_frames=output_frames,
+        attn_frames=attn_frames,
+        prob_frames=logits_frames,  # logits_frames contains probabilities after softmax
+        x_frames=x_frames,
+        board_size=boardpath_params.board_size,
+        input_board=input_board.flatten()
+    )
+    save_gif(board_images, 'board_attention.gif', duration=500)
+
+    # 3. Neural activity UMAP animation
+    print("\n[3/4] Neural activity (UMAP)...")
+    neural_images = generate_neural_activity_frames(
+        y_frames=y_frames,
+        model=bdh,
+        target_board=target_board.flatten()
+    )
+    save_gif(neural_images, 'neural_activity.gif', duration=500)
+
+    # 4. Sparsity chart
+    print("\n[4/4] Sparsity chart...")
+    generate_sparsity_chart(x_frames, y_frames, 'sparsity_chart.png')
+
     print("\nVisualization files:")
-    print("  bdh_visualization.gif")
+    print("  bdh_visualization.gif - Neuron dynamics with Gx connectivity")
+    print("  board_attention.gif   - Board predictions + attention + x activity")
+    print("  neural_activity.gif   - UMAP neural activity (y activations)")
+    print("  sparsity_chart.png    - x/y sparsity across layers")
     print()
 
 def set_all_seeds(seed: int):
