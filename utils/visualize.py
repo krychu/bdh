@@ -958,7 +958,6 @@ def generate_neural_activity_frames(
 
 def generate_simple_board_frames(
     output_frames: List[torch.Tensor],
-    prob_frames: List[torch.Tensor],
     board_size: int
 ) -> List[Image.Image]:
     """
@@ -966,7 +965,6 @@ def generate_simple_board_frames(
 
     Args:
         output_frames: List of (T,) tensors with predicted tokens per layer
-        prob_frames: List of (T, V) tensors with class probabilities per layer
         board_size: Board size (e.g., 10)
 
     Returns:
@@ -989,33 +987,14 @@ def generate_simple_board_frames(
         fig, ax = plt.subplots(figsize=(8, 8))
 
         predictions = output_frames[layer_idx]
-        logits = prob_frames[layer_idx]
 
-        # Squeeze batch dimension if present
-        if logits.dim() == 3:
-            logits = logits.squeeze(0)
-
-        # Get PATH probabilities for shading
-        if torch.is_tensor(logits):
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()
-        else:
-            probs = np.exp(logits) / np.exp(logits).sum(axis=-1, keepdims=True)
-        path_probs = probs[:, PATH]
-
-        # Create board image from predictions
+        # Create board image from predictions (solid colors, no confidence shading)
         pred_np = predictions.cpu().numpy() if torch.is_tensor(predictions) else predictions
         board_img = np.zeros((board_size, board_size, 3))
         for i in range(T):
             row, col = i // board_size, i % board_size
             cell_val = int(pred_np[i])
-            base_color = colors.get(cell_val, colors[FLOOR])
-
-            # Shade PATH cells by confidence
-            if cell_val == PATH:
-                confidence = path_probs[i] ** 2
-                board_img[row, col] = base_color * confidence + colors[FLOOR] * (1 - confidence)
-            else:
-                board_img[row, col] = base_color
+            board_img[row, col] = colors.get(cell_val, colors[FLOOR])
 
         ax.imshow(board_img, interpolation='nearest')
 

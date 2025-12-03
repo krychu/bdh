@@ -216,7 +216,6 @@ def run_inference(path: str):
     print("\n[2/5] Simple board predictions...")
     simple_board_frames = generate_simple_board_frames(
         output_frames=output_frames,
-        prob_frames=logits_frames,
         board_size=boardpath_params.board_size
     )
 
