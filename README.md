@@ -13,8 +13,6 @@ I find the paper particularly fascinating for its elegant synthesis of concepts 
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-BDH's architecture enables direct visualization of its internal computation. The challenge is that inference relies on multiple superimposed topologies: fixed learned circuits (the model weights) and dynamic activations that change at inference time.
-
 ![combined_board_neuron](https://github.com/user-attachments/assets/a3b76ce7-b1cc-4824-89f6-d4c2e1528a7f)
 
 <table width="100%">
@@ -26,7 +24,7 @@ BDH's architecture enables direct visualization of its internal computation. The
   </thead>
   <tr>
     <td valign="top" width="50%">
-      The model's output refined layer by layer. Gold cells show the predicted path.
+      The model's output refined layer by layer.<br><br>Legend: FLOOR (white), WALL (black), START (red), END (green), PATH (gold)<br><br>
     </td>
     <td valign="top" width="50%">
       Signal flow through the learned "causal circuit" - the neuron-to-neuron connectivity graph.<br><br>
@@ -37,6 +35,8 @@ BDH's architecture enables direct visualization of its internal computation. The
     </td>
   </tr>
 </table>
+
+BDH's architecture enables direct visualization of its internal computation. The challenge is that inference relies on multiple superimposed topologies: fixed learned circuits (the model weights) and dynamic activations that change at inference time.
 
 The model has 8,000+ neurons but for clarity I render only the hub subgraph selected by connectivity degree. Specifically: neurons are ranked by their degree in Gx (counting edges where |Gx[i,j]| > threshold), top candidates are selected, and small disconnected components are pruned. Remarkably, the sparse, modular organization you see is emergent. The model was not hard-coded to have hubs, but spontaneously organized itself this way from random initialization. This replicates the paper's empirical findings.
 
