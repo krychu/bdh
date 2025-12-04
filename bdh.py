@@ -86,7 +86,8 @@ class BDH(nn.Module):
             output_frames: List[torch.Tensor] = []
             x_frames: List[torch.Tensor] = []
             y_frames: List[torch.Tensor] = []
-            synapse_frames: List[torch.Tensor] = []
+            attn_frames: List[torch.Tensor] = []  # Attention scores per layer
+            logits_frames: List[torch.Tensor] = []  # Per-layer logits
 
         for _ in range(self.L):
             if self.use_abs_pos:
@@ -98,7 +99,10 @@ class BDH(nn.Module):
             x = self.drop(x)
 
             # BHTNh @ (BHTNh^T @ B1TD) -> BHTNh @ (BHNhT @ B1TD) -> BHTNh @ BHNhD -> BHTD
-            a_ast = self.linear_attn(x, x, v_ast)
+            if capture_frames:
+                a_ast, attn_scores = self.linear_attn(x, x, v_ast, return_scores=True)
+            else:
+                a_ast = self.linear_attn(x, x, v_ast)
 
             # (BHTD @ HDNh) * BHTNh -> BHTNh * BHTNh -> BHTNh
             y = F.relu(self.ln(a_ast) @ self.Dy) * x
@@ -112,13 +116,26 @@ class BDH(nn.Module):
             #v_ast = self.drop(v_ast)
 
             if capture_frames:
-                self._capture_frame(v_ast, x, y, T, output_frames, x_frames, y_frames, synapse_frames)
+                self._capture_frame(
+                    v_ast,
+                    x,
+                    y,
+                    T,
+                    output_frames,
+                    x_frames,
+                    y_frames
+                )
+                # Capture attention scores (average over heads) -> (B, T, T)
+                attn_frames.append(attn_scores.mean(dim=1).detach().clone())
+                # Capture per-layer logits
+                layer_logits = v_ast.squeeze(1) @ self.readout  # (B, T, V)
+                logits_frames.append(layer_logits.detach().clone())
 
         # squ(B1TD) @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
 
         if capture_frames:
-            return logits, output_frames, x_frames, y_frames, synapse_frames
+            return logits, output_frames, x_frames, y_frames, attn_frames, logits_frames
         return logits
 
     def _capture_frame(
@@ -129,30 +146,22 @@ class BDH(nn.Module):
         T: int,
         output_frames: List[torch.Tensor],
         x_frames: List[torch.Tensor],
-        y_frames: List[torch.Tensor],
-        synapse_frames: List[torch.Tensor]
+        y_frames: List[torch.Tensor]
     ):
         # B1TD @ DV -> BTD @ DV -> BTV
         logits = v_ast.squeeze(1) @ self.readout
         predicted = logits.argmax(dim=-1)
         output_frames.append(predicted[0])  # (T,) - single sample
 
-        # Use only first sample for x, y, and synapse frames
+        # Use only first sample for x, y frames
+        # Return full (T, N) arrays - averaging is done in visualization code
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         x_reshaped = x[0].transpose(0, 1).reshape(T, self.N)
-        # (N,) - avg activation per neuron across tokens (positions)
-        x_frames.append(x_reshaped.mean(dim=0).detach().clone())
+        x_frames.append(x_reshaped.detach().clone())  # (T, N)
 
-        # Compute synapse matrix for first sample: average(x.T @ y) across tokens
         # re(tr(BHTNh[0])) -> re(tr(HTNh)) -> re(THNh) -> TN (first sample only)
         y_reshaped = y[0].transpose(0, 1).reshape(T, self.N)
-
-        # (N,) - avg activation per neuron across tokens (positions)
-        y_frames.append(y_reshaped.mean(dim=0).detach().clone())
-
-        # TN^T @ TN -> NT @ TN -> NN (avg over tokens)
-        synapse = (x_reshaped.T @ y_reshaped) / T
-        synapse_frames.append(synapse.detach().clone())
+        y_frames.append(y_reshaped.detach().clone())  # (T, N)
 
 # For RoPE pairs we use concatenated layout, instead of interleaved. For
 # (a,b,c,d) the pairs are (a,c) and (b,d).
@@ -212,7 +221,7 @@ class LinearAttention(nn.Module):
                 base=10000.0
             )
 
-    def forward(self, Q, K, V):
+    def forward(self, Q, K, V, return_scores: bool = False):
         if self.use_rope:
             _, _, T, _ = Q.size()
             cos_sin = self.rotary(T)
@@ -222,7 +231,11 @@ class LinearAttention(nn.Module):
             QR = Q
 
         KR = QR
-        return (QR @ KR.mT) @ V
+        scores = QR @ KR.mT  # BHTT
+        output = scores @ V
+        if return_scores:
+            return output, scores
+        return output
 
 def count_matching_corresponding_rows(a: torch.Tensor, b: torch.Tensor) -> int:
     assert(len(a.shape)==2 and len(b.shape)==2)

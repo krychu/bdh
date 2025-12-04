@@ -168,7 +168,7 @@ def run_inference(path: str):
     input_flat_bs = input_board.flatten().unsqueeze(0).to(device) # [1, seq_len]
 
     with torch.no_grad():
-        logits_btv, output_frames, x_frames, y_frames, synapse_frames = bdh(input_flat_bs, capture_frames=True)
+        logits_btv, output_frames, x_frames, y_frames, attn_frames, logits_frames = bdh(input_flat_bs, capture_frames=True)
         predicted = logits_btv.argmax(dim=-1) # BS
 
     print("\nINPUT BOARD:")
@@ -184,37 +184,68 @@ def run_inference(path: str):
 
     print("\nGenerating visualizations...")
     from utils.visualize import (
-        generate_board_frames,
-        generate_graph_frames,
-        generate_interleaved_graph_frames,
-        combine_image_lists,
+        generate_neuron_animation,
+        generate_board_attention_frames,
+        generate_simple_board_frames,
+        generate_animated_sparsity_frames,
+        combine_frames_side_by_side,
+        add_watermark_to_frames,
         save_gif
     )
+    import numpy as np
 
-    board_images = generate_board_frames(output_frames, boardpath_params.board_size)
-    hub_flow_images = generate_graph_frames(x_frames, synapse_frames, bdh, 5000,
-                                             topology_type='e_dx', y_frames=y_frames,
-                                             visualization_mode='signal_flow', min_component_size=10)
-    dy_hub_images = generate_graph_frames(x_frames, synapse_frames, bdh, 5000,
-                                          topology_type='dy_coact', y_frames=y_frames,
-                                          min_component_size=10)
-    interleaved_hub_images = generate_interleaved_graph_frames(x_frames, y_frames, synapse_frames,
-                                                                bdh, 5000, min_component_size=10)
+    # Set to True to only average activations over path cells (START, END, PATH)
+    USE_PATH_MASK = False
 
-    save_gif(board_images, 'output_predictions.gif', duration=170)
-    save_gif(hub_flow_images, 'graph_e_dx_hub_flow.gif', duration=170)
-    save_gif(dy_hub_images, 'graph_dy_coact_hub.gif', duration=170)
-    save_gif(interleaved_hub_images, 'graph_interleaved_hub.gif', duration=200)
+    token_mask = None
+    if USE_PATH_MASK:
+        target_flat = target_board.flatten().numpy()
+        token_mask = target_flat >= START  # START=2, END=3, PATH=4
 
-    combined = combine_image_lists([board_images, interleaved_hub_images], spacing=20)
-    save_gif(combined, 'combined_board_interleaved.gif', duration=200)
+    # 1. Neuron dynamics (Gx graph)
+    print("\n[1/4] Neuron dynamics (Gx graph)...")
+    neuron_frames = generate_neuron_animation(
+        x_frames=x_frames,
+        y_frames=y_frames,
+        model=bdh,
+        token_mask=token_mask
+    )
+
+    # 2. Simple board predictions
+    print("\n[2/4] Simple board predictions...")
+    simple_board_frames = generate_simple_board_frames(
+        output_frames=output_frames,
+        board_size=boardpath_params.board_size
+    )
+
+    # 3. Board attention (full detail)
+    print("\n[3/4] Board attention (full detail)...")
+    attention_board_frames = generate_board_attention_frames(
+        output_frames=output_frames,
+        attn_frames=attn_frames,
+        prob_frames=logits_frames,
+        x_frames=x_frames,
+        board_size=boardpath_params.board_size,
+        input_board=input_board.flatten()
+    )
+
+    # 4. Animated sparsity chart + Combine into final GIFs
+    print("\n[4/4] Animated sparsity chart + Combining...")
+    sparsity_frames = generate_animated_sparsity_frames(x_frames, y_frames)
+
+    # GIF 1: Board (simple) + Neuron dynamics
+    combined_hero = combine_frames_side_by_side(simple_board_frames, neuron_frames)
+    combined_hero = add_watermark_to_frames(combined_hero)
+    save_gif(combined_hero, 'combined_board_neuron.gif', duration=500)
+
+    # GIF 2: Board attention + Animated sparsity
+    combined_detail = combine_frames_side_by_side(attention_board_frames, sparsity_frames)
+    combined_detail = add_watermark_to_frames(combined_detail)
+    save_gif(combined_detail, 'combined_attention_sparsity.gif', duration=500)
 
     print("\nVisualization files:")
-    print("  output_predictions.gif")
-    print("  graph_e_dx_hub_flow.gif")
-    print("  graph_dy_coact_hub.gif")
-    print("  graph_interleaved_hub.gif")
-    print("  combined_board_interleaved.gif")
+    print("  combined_board_neuron.gif       - Board predictions + Neuron dynamics")
+    print("  combined_attention_sparsity.gif - Board attention + Sparsity animation")
     print()
 
 def set_all_seeds(seed: int):

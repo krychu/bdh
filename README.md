@@ -13,33 +13,47 @@ I find the paper particularly fascinating for its elegant synthesis of concepts 
 
 The model is trained on a pathfinding task: given an N×N board with obstacles, find the shortest path from START to END.
 
-![combined_board_interleaved](https://github.com/user-attachments/assets/82a3ab72-a237-456e-a29e-b5f65dd7b6db)
+[combined_board_neuron.gif]
 
-BDH's architecture enables direct visualization of its internal computation. However, visualizing signal flow is challenging because inference relies on the superposition of static learned circuits (the "wiring" or "program") and dynamic attention mechanisms (the "state").
+BDH's architecture enables direct visualization of its internal computation. The challenge is that inference relies on multiple superimposed topologies: fixed learned circuits (the model weights) and dynamic activations that change at inference time.
 
-**Visualization Note:** The model contains over 8,000 neurons, but I render only the **"Hub" subgraph** - the top strongest connections. Remarkably, the sparse, modular organization you see is emergent. The model was not hard-coded to have hubs, but spontaneously organized itself this way from random initialization. This replicates the paper's empirical findings.
+**Left Panel: Board Predictions**
+The model's output refined layer by layer. Gold cells show the predicted path.
 
-The animation above shows the model solving a board puzzle:
-*   **Left:** The model's output board predictions being refined layer by layer.
-*   **Right:** A unified view of the reasoning process ($L-1 \to L$), separating Association from Causality.
-    *   **Nodes:** Blue Nodes represent **Context** (neurons $y_{l-1}$ active in the previous step). Red Nodes represent **Inference** (neurons $x_l$ triggered in the current step).
-    *   **Blue Edges (Association):** Highlight non-causal co-activation patterns of the previous context. They connect Blue nodes ($y_{l-1}$) that are functionally related and active together.
-    *   **Red Edges (Causality):** Show the physical signal flow. They trace how the previous context propagates through the fixed topology to trigger the new Red nodes ($y_{l-1} \to x_l$).
+**Right Panel: Neuron Dynamics (Gx = E @ Dx)**
+Signal flow through the learned "causal circuit"—the neuron-to-neuron connectivity graph.
+- **Blue rings**: Source neurons (y_{l-1} from previous layer)
+- **Red fill**: Destination neurons (x_l triggered in current layer)
+- **Edge darkness**: Signal flow, computed as y_{l-1} × Gx × x_l
 
-Together, they visualize a logical chain: Blue establishes "what we know" and Red executes the logical implication "what follows from it."
+Activations are averaged across all board cells to produce one value per neuron.
+
+The model has 8,000+ neurons but for clarity I render only the hub subgraph selected by connectivity degree. Specifically: neurons are ranked by their degree in Gx (counting edges where |Gx[i,j]| > threshold), top candidates are selected, and small disconnected components are pruned. Remarkably, the sparse, modular organization you see is emergent. The model was not hard-coded to have hubs, but spontaneously organized itself this way from random initialization. This replicates the paper's empirical findings.
+
+---
+
+[combined_attention_sparsity.gif]
+
+**Left Panel: Board Attention**
+The model's output refined layer by layer, with extra detail. Blue arrows show the top 30 strongest cell-to-cell attentions. Red dots indicate x activation per cell, scaled by strength. PATH cells shown in gold with confidence via alpha shading.
+
+**Right Panel: Sparsity Dynamics**
+Percentage of neurons active per layer:
+- **Red (x)**: ~20% — the "gate" that controls information flow
+- **Blue (y)**: ~3-5% — the sparse "signal" that actually fires
+
+The chart confirms that y activations are indeed very sparse throughout inference.
 
 ## Key Concepts of the BDH Architecture
 
 The BDH architecture introduces several design choices that distinguish it from conventional Transformers and enable the causal interpretability shown above.
 
-* **Neuron-Centric Scaling**: The model scales primarily in the high-dimensional **Neuron** dimension, rather than the dense latent dimension of Transformers. Parameters and state are localized to specific neuron pairs, mirroring biological structure.
-* **Fixed Topologies as "Learned Programs"**: The model weights define two sparse, scale-free graphs that act as the system's fixed ruleset:
-    1. **The Causal Circuit (`E @ Dx`):** Implements a probabilistic form of **Modus Ponens** reasoning ("If concept A is active, trigger concept B"). This corresponds to the **Red** edges in the visualization.
-    2. **The Semantic Circuit (`Dy.T @ Dy`):** Groups neurons representing similar concepts (clustering). This corresponds to the **Blue** edges in the visualization.
-* **Dynamic Synaptic State (Hebbian Memory)**: During inference, the network maintains fast-changing memory in the form of synaptic weights (state). These are updated via a **Hebbian Learning** rule ("neurons that fire together, wire together"). This allows the model to dynamically re-weight its fixed program based on the current context.
-* **Sparse & Positive Activations**: The architecture enforces all activation vectors to be positive and highly sparse. Empirically, only a small fraction of neurons fire per step. This sparsity is what makes the "Hub" visualization possible - it filters out noise and reveals the distinct logical paths taken by the model.
-
-The visualizations in the demo are not a post-hoc approximation; they are a direct rendering of the model's state variables during the forward pass.
+* **Neuron-Centric Scaling**: The model scales primarily in the high-dimensional **Neuron** dimension (n), rather than the dense latent dimension of Transformers. Parameters and state are localized to specific neuron pairs, mirroring biological structure.
+* **Fixed Topologies as "Learned Programs"**: The model weights define sparse, scale-free graphs that act as the system's fixed ruleset:
+    1. **The Causal Circuit (`Gx = E @ Dx`):** Implements signal propagation from y to x - a probabilistic form of **Modus Ponens** reasoning ("If concept A is active, trigger concept B"). The paper calls these the "wires".
+    2. **The Output Circuit (`Gy = Dy @ E`):** Determines which neurons (y) should fire based on the attention-weighted context. The paper calls these the "prods".
+* **Dynamic Synaptic State (Edge-Reweighting)**: Instead of a vector-based KV-cache, the model maintains "fast weights" on the edges between neurons (matrix σ). This state is updated via a **Hebbian Learning** rule ("neurons that fire together, wire together"), allowing the model to dynamically re-weight its own reasoning circuits over the duration of the context.
+* **Sparse & Positive Activations**: The architecture enforces all activation vectors to be strictly positive and sparse. As noted in the paper, y activations are observed to be "extremely sparse" in practice - our results confirm this (~3-5%). This design prevents the polysemantic "superposition" common in dense models, effectively filtering noise and isolating distinct logical paths.
 
 ## Usage
 
@@ -74,12 +88,10 @@ Optional: If you have a specific checkpoint file you wish to load:
 python3 boardpath.py --mode inference --model my_model.pt
 ```
 
-This will print the input, target, and predicted boards to the console and generate several visualization GIFs:
-- `output_predictions.gif`: The model's board predictions evolving layer by layer.
-- `graph_e_dx_hub_flow.gif`: Signal flow through the E @ Dx communication topology.
-- `graph_dy_coact_hub.gif`: Co-activation patterns in the Dy.T @ Dy attention decoder.
-- `graph_interleaved_hub.gif`: Unified dual-network view (blue: Dy co-activation, red: Dx signal flow).
-- `combined_board_interleaved.gif`: Side-by-side board predictions and dual-network visualization (shown in the demo).
+This will print the input, target, and predicted boards to the console and generate visualizations:
+- `combined_board_neuron.gif`: Board predictions + Neuron dynamics (shown in demo above)
+- `combined_attention_sparsity.gif`: Board attention + Sparsity animation (shown in demo above)
+- `sparsity_chart.png`: Static sparsity summary
 
 #### Configuration
 To adjust the model architecture or task parameters (e.g., board size, number of neurons), edit the `get_config()` function in `boardpath.py`.
