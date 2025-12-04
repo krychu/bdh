@@ -1,14 +1,3 @@
-"""
-BDH Neuron Dynamics Visualization
-
-Visualizes signal flow through the neuron graph Gx = E @ Dx:
-- Fixed layout from force-directed algorithm based on Gx connectivity
-- Neurons selected by degree in Gx
-- Gray edges show Gx structure, darken with signal flow
-- Red fill = x_l activation (destination)
-- Blue ring = y_{l-1} activation (source)
-"""
-
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image

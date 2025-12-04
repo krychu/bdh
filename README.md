@@ -30,9 +30,9 @@ BDH's architecture enables direct visualization of its internal computation. The
     </td>
     <td valign="top" width="50%">
       Signal flow through the learned "causal circuit" - the neuron-to-neuron connectivity graph.<br><br>
-      - Blue rings: Source neurons (y<sub>l−1</sub> from previous layer)<br>
-      - Red fill: Destination neurons (x<sub>l</sub> triggered in current layer)<br>
-      - Edge darkness: Signal flow, computed as y<sub>l−1</sub> × Gx × x<sub>l</sub><br><br>
+      - Blue rings: Source neurons (y<sub>l−1</sub>)<br>
+      - Red fill: Destination neurons (x<sub>l</sub>)<br>
+      - Edge darkness: Signal flow, y<sub>l−1</sub> × Gx × x<sub>l</sub><br><br>
       Activations are averaged across all board cells to produce one value per neuron.
     </td>
   </tr>
@@ -54,9 +54,9 @@ The model has 8,000+ neurons but for clarity I render only the hub subgraph sele
   <tr>
     <td valign="top" width="50%">
       The model's output refined layer by layer, with extra detail.<br><br>
-      - Blue arrows show the top 30 strongest cell-to-cell attentions<br>
-      - Red dots indicate x activation per cell, scaled by strength<br>
-      - PATH cells shown in gold with confidence via alpha shading
+      - Blue arrows: top 30 strongest cell-to-cell attentions<br>
+      - Red dots: proportion of active neurons (x) per cell<br>
+      - PATH cells in gold, confidence shown via alpha
     </td>
     <td valign="top" width="70%">
       Percentage of neurons active per layer. Red (x): ~20%, Blue (y): ~3-5%
@@ -66,8 +66,8 @@ The model has 8,000+ neurons but for clarity I render only the hub subgraph sele
 
 Blue arrows show attention initially radiating from START and END toward neighboring cells. As the path extends from both endpoints, attention shifts to the newly predicted cells, flowing outward to discover the remaining route until the path connects in the middle.
 
-Red dots show high x activation at START, END, and WALL throughout, with PATH cells lighting up progressively as predictions solidify.
-  
+Red dots show more neurons firing at START, END, and WALL, with PATH cells activating progressively as predictions solidify.
+
 The chart confirms that y activations are indeed very sparse throughout inference.
 
 ## Key Concepts of the BDH Architecture
