@@ -79,7 +79,7 @@ The BDH architecture introduces several design choices that distinguish it from 
     1. **The Causal Circuit (`Gx = E @ Dx`):** Implements signal propagation from y to x - a probabilistic form of **Modus Ponens** reasoning ("If concept A is active, trigger concept B"). The paper calls these the "wires".
     2. **The Output Circuit (`Gy = Dy @ E`):** Determines which neurons (y) should fire based on the attention-weighted context. The paper calls these the "prods".
 * **Dynamic Synaptic State (Edge-Reweighting)**: Instead of a vector-based KV-cache, the model maintains "fast weights" on the edges between neurons (matrix σ). This state is updated via a **Hebbian Learning** rule ("neurons that fire together, wire together"), allowing the model to dynamically re-weight its own reasoning circuits over the duration of the context.
-* **Sparse & Positive Activations**: The architecture enforces all activation vectors to be strictly positive and sparse. As noted in the paper, y activations are observed to be "extremely sparse" in practice - our results confirm this (~3-5%). This design prevents the polysemantic "superposition" common in dense models, effectively filtering noise and isolating distinct logical paths.
+* **Sparse & Positive Activations**: The architecture enforces all activation vectors to be strictly positive and sparse. As noted in the paper, y activations are observed to be "extremely sparse" in practice (~3-5%). This design prevents the polysemantic "superposition" common in dense models, effectively filtering noise and isolating distinct logical paths.
 
 ## Usage
 
