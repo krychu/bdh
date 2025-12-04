@@ -188,7 +188,6 @@ def run_inference(path: str):
         generate_board_attention_frames,
         generate_simple_board_frames,
         generate_animated_sparsity_frames,
-        generate_sparsity_chart,
         combine_frames_side_by_side,
         add_watermark_to_frames,
         save_gif
@@ -204,7 +203,7 @@ def run_inference(path: str):
         token_mask = target_flat >= START  # START=2, END=3, PATH=4
 
     # 1. Neuron dynamics (Gx graph)
-    print("\n[1/5] Neuron dynamics (Gx graph)...")
+    print("\n[1/4] Neuron dynamics (Gx graph)...")
     neuron_frames = generate_neuron_animation(
         x_frames=x_frames,
         y_frames=y_frames,
@@ -213,14 +212,14 @@ def run_inference(path: str):
     )
 
     # 2. Simple board predictions
-    print("\n[2/5] Simple board predictions...")
+    print("\n[2/4] Simple board predictions...")
     simple_board_frames = generate_simple_board_frames(
         output_frames=output_frames,
         board_size=boardpath_params.board_size
     )
 
     # 3. Board attention (full detail)
-    print("\n[3/5] Board attention (full detail)...")
+    print("\n[3/4] Board attention (full detail)...")
     attention_board_frames = generate_board_attention_frames(
         output_frames=output_frames,
         attn_frames=attn_frames,
@@ -230,12 +229,9 @@ def run_inference(path: str):
         input_board=input_board.flatten()
     )
 
-    # 4. Animated sparsity chart
-    print("\n[4/5] Animated sparsity chart...")
+    # 4. Animated sparsity chart + Combine into final GIFs
+    print("\n[4/4] Animated sparsity chart + Combining...")
     sparsity_frames = generate_animated_sparsity_frames(x_frames, y_frames)
-
-    # 5. Combine into final GIFs
-    print("\n[5/5] Combining visualizations...")
 
     # GIF 1: Board (simple) + Neuron dynamics
     combined_hero = combine_frames_side_by_side(simple_board_frames, neuron_frames)
@@ -247,13 +243,9 @@ def run_inference(path: str):
     combined_detail = add_watermark_to_frames(combined_detail)
     save_gif(combined_detail, 'combined_attention_sparsity.gif', duration=500)
 
-    # Also save static sparsity chart
-    generate_sparsity_chart(x_frames, y_frames, 'sparsity_chart.png')
-
     print("\nVisualization files:")
-    print("  combined_board_neuron.gif      - Board predictions + Neuron dynamics (hero)")
+    print("  combined_board_neuron.gif       - Board predictions + Neuron dynamics")
     print("  combined_attention_sparsity.gif - Board attention + Sparsity animation")
-    print("  sparsity_chart.png              - Static sparsity summary")
     print()
 
 def set_all_seeds(seed: int):

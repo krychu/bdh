@@ -3,5 +3,3 @@ numpy
 matplotlib
 networkx
 pillow
-scipy
-scikit-learn

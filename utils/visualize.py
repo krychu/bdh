@@ -10,8 +10,6 @@ Visualizes signal flow through the neuron graph Gx = E @ Dx:
 """
 
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.colors import ListedColormap
 import numpy as np
 from PIL import Image
 import torch
@@ -32,6 +30,15 @@ DEFAULT_CONFIG = {
     'max_edges': 2000,          # Cap on total edges
     'min_component_size': 5,    # Remove components with fewer neurons
     'layout_seed': 42,          # Random seed for layout
+}
+
+# Board cell colors for visualization
+BOARD_COLORS = {
+    FLOOR: np.array([0.95, 0.95, 0.95]),
+    WALL: np.array([0.15, 0.15, 0.15]),
+    START: np.array([0.2, 0.8, 0.2]),
+    END: np.array([0.9, 0.2, 0.2]),
+    PATH: np.array([1.0, 0.84, 0.0]),
 }
 
 
@@ -631,16 +638,6 @@ def generate_board_attention_frames(
         List of PIL Images
     """
     T = board_size * board_size
-
-    # Cell colors
-    colors = {
-        FLOOR: np.array([0.95, 0.95, 0.95]),
-        WALL: np.array([0.15, 0.15, 0.15]),
-        START: np.array([0.2, 0.8, 0.2]),
-        END: np.array([0.9, 0.2, 0.2]),
-        PATH: np.array([1.0, 0.84, 0.0]),
-    }
-
     images = []
     n_layers = len(output_frames)
 
@@ -671,12 +668,12 @@ def generate_board_attention_frames(
         for i in range(T):
             row, col = i // board_size, i % board_size
             cell_val = int(pred_np[i])
-            base_color = colors.get(cell_val, colors[FLOOR])
+            base_color = BOARD_COLORS.get(cell_val, BOARD_COLORS[FLOOR])
 
             # Shade PATH cells by confidence
             if cell_val == PATH:
                 confidence = path_probs[i] ** 2
-                board_img[row, col] = base_color * confidence + colors[FLOOR] * (1 - confidence)
+                board_img[row, col] = base_color * confidence + BOARD_COLORS[FLOOR] * (1 - confidence)
             else:
                 board_img[row, col] = base_color
 
@@ -777,182 +774,6 @@ def generate_board_attention_frames(
 
 
 # ============================================================================
-# Neural Activity UMAP Animation
-# ============================================================================
-
-def compute_neuron_features_gy(model: nn.Module) -> np.ndarray:
-    """
-    Extract Gy = Dy·E features for UMAP layout.
-
-    Gy captures neuron-to-neuron interaction in the signal (y) pathway.
-
-    Returns:
-        features: (N, N) array - each row is a neuron's interaction pattern
-    """
-    H, D, Nh = model.Dx.shape
-    N = H * Nh
-
-    Dy_flat = model.Dy.permute(1, 0, 2).reshape(D, -1)  # (D, N)
-    E = model.E  # (N, D)
-    Gy = Dy_flat.T @ E.T  # (N, D) @ (D, N) = (N, N)
-
-    return Gy.detach().cpu().numpy()
-
-
-def compute_umap_layout(
-    neuron_features: np.ndarray,
-    seed: int = 42
-) -> np.ndarray:
-    """
-    Compute 2D UMAP layout for neurons.
-
-    Args:
-        neuron_features: (N, F) feature matrix
-        seed: Random seed
-
-    Returns:
-        positions: (N, 2) array of coordinates normalized to [0, 1]
-    """
-    try:
-        import umap
-        reducer = umap.UMAP(
-            n_components=2,
-            n_neighbors=15,
-            min_dist=0.1,
-            metric='euclidean',
-            random_state=seed
-        )
-        positions = reducer.fit_transform(neuron_features)
-    except ImportError:
-        print("  UMAP not available, falling back to PCA")
-        from sklearn.decomposition import PCA
-        pca = PCA(n_components=2, random_state=seed)
-        positions = pca.fit_transform(neuron_features)
-
-    # Normalize to [0, 1]
-    positions = positions - positions.min(axis=0)
-    positions = positions / (positions.max() + 1e-8)
-
-    return positions
-
-
-def generate_neural_activity_frames(
-    y_frames: List[torch.Tensor],
-    model: nn.Module,
-    target_board: Optional[torch.Tensor] = None,
-    seed: int = 42
-) -> List[Image.Image]:
-    """
-    Generate neural activity animation showing y activations on UMAP layout.
-
-    Args:
-        y_frames: List of (T, N) tensors with y activations per layer
-        model: BDH model instance
-        target_board: Optional (T,) target board - if provided, average y over PATH cells
-        seed: Random seed for UMAP
-
-    Returns:
-        List of PIL Images
-    """
-    N = model.N
-
-    # Compute UMAP layout (fixed across frames)
-    print("  Computing Gy = Dy @ E for UMAP...")
-    neuron_features = compute_neuron_features_gy(model)
-    print(f"  Computing UMAP layout for {N} neurons...")
-    positions = compute_umap_layout(neuron_features, seed)
-
-    # Determine path mask
-    path_mask = None
-    n_path_cells = 0
-    if target_board is not None:
-        target_np = target_board.cpu().numpy() if torch.is_tensor(target_board) else target_board
-        path_mask = (target_np == PATH)
-        n_path_cells = path_mask.sum()
-        print(f"  Averaging y over {n_path_cells} PATH cells")
-
-    images = []
-    n_layers = len(y_frames)
-
-    for layer_idx in range(n_layers):
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-        y_act_full = y_frames[layer_idx].cpu().numpy()  # (T, N)
-
-        # Average over PATH cells or all cells
-        if path_mask is not None and n_path_cells > 0:
-            y_act = y_act_full[path_mask].mean(axis=0)  # (N,)
-            label = f'PATH cells (n={n_path_cells})'
-        else:
-            y_act = y_act_full.mean(axis=0)
-            label = 'All cells'
-
-        # Normalize
-        y_max = y_act.max() if y_act.max() > 0 else 1.0
-        y_norm = y_act / y_max
-
-        # Colors: gray for inactive, white for active
-        gray = np.array([0.25, 0.25, 0.25])
-        white = np.array([1.0, 1.0, 1.0])
-        node_colors = np.zeros((N, 3))
-        sizes = np.zeros(N)
-
-        for i in range(N):
-            y_val = min(y_norm[i], 1.0)
-            node_colors[i] = gray * (1 - y_val) + white * y_val
-            sizes[i] = 1.5 + 8.0 * (y_val ** 2)
-
-        ax.scatter(
-            positions[:, 0],
-            positions[:, 1],
-            s=sizes,
-            c=node_colors,
-            alpha=0.8,
-            edgecolors='none'
-        )
-
-        # Stats
-        if path_mask is not None and n_path_cells > 0:
-            path_pcts = (y_act_full[path_mask] > 0).mean(axis=1) * 100
-            avg_pct = path_pcts.mean()
-            stats_text = f'y: {avg_pct:.1f}% avg/path\n{label}'
-        else:
-            per_cell_pct = (y_act_full > 0).mean(axis=1) * 100
-            avg_pct = per_cell_pct.mean()
-            stats_text = f'y: {avg_pct:.1f}% avg/cell\n{label}'
-
-        ax.text(0.02, 0.98, stats_text,
-                transform=ax.transAxes,
-                fontsize=9,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                family='monospace')
-
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 1.05)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_title(f'Neural Activity (y) - Layer {layer_idx}', fontsize=12, fontweight='bold')
-        ax.set_facecolor('#1a1a2e')
-
-        # Legend
-        legend_elements = [
-            mpatches.Patch(facecolor='white', label='y active'),
-            mpatches.Patch(facecolor='#404040', label='inactive'),
-        ]
-        ax.legend(handles=legend_elements, loc='lower right', fontsize=9)
-
-        plt.tight_layout()
-        images.append(fig_to_pil_image(fig))
-
-    return images
-
-
-# ============================================================================
-# Sparsity Chart (Static PNG)
-# ============================================================================
-
-# ============================================================================
 # Simple Board Animation (no arrows/dots)
 # ============================================================================
 
@@ -971,15 +792,6 @@ def generate_simple_board_frames(
         List of PIL Images
     """
     T = board_size * board_size
-
-    colors = {
-        FLOOR: np.array([0.95, 0.95, 0.95]),
-        WALL: np.array([0.15, 0.15, 0.15]),
-        START: np.array([0.2, 0.8, 0.2]),
-        END: np.array([0.9, 0.2, 0.2]),
-        PATH: np.array([1.0, 0.84, 0.0]),
-    }
-
     images = []
     n_layers = len(output_frames)
 
@@ -994,7 +806,7 @@ def generate_simple_board_frames(
         for i in range(T):
             row, col = i // board_size, i % board_size
             cell_val = int(pred_np[i])
-            board_img[row, col] = colors.get(cell_val, colors[FLOOR])
+            board_img[row, col] = BOARD_COLORS.get(cell_val, BOARD_COLORS[FLOOR])
 
         ax.imshow(board_img, interpolation='nearest')
 
@@ -1161,76 +973,3 @@ def combine_frames_side_by_side(
         combined.append(combined_img)
 
     return combined
-
-
-# ============================================================================
-# Sparsity Chart (Static PNG)
-# ============================================================================
-
-def generate_sparsity_chart(
-    x_frames: List[torch.Tensor],
-    y_frames: List[torch.Tensor],
-    save_path: str = 'sparsity_chart.png'
-) -> Image.Image:
-    """
-    Generate static chart showing x and y sparsity across layers.
-
-    Args:
-        x_frames: List of (T, N) tensors with x activations per layer
-        y_frames: List of (T, N) tensors with y activations per layer
-        save_path: Path to save PNG
-
-    Returns:
-        PIL Image
-    """
-    n_layers = len(y_frames)
-
-    # Compute per-cell sparsity stats for y
-    y_avg, y_min, y_max = [], [], []
-    for layer_idx in range(n_layers):
-        y_act = y_frames[layer_idx].cpu().numpy()
-        per_cell = (y_act > 0).mean(axis=1) * 100
-        y_avg.append(per_cell.mean())
-        y_min.append(per_cell.min())
-        y_max.append(per_cell.max())
-
-    # Compute for x
-    x_avg, x_min, x_max = [], [], []
-    for layer_idx in range(n_layers):
-        x_act = x_frames[layer_idx].cpu().numpy()
-        per_cell = (x_act > 0).mean(axis=1) * 100
-        x_avg.append(per_cell.mean())
-        x_min.append(per_cell.min())
-        x_max.append(per_cell.max())
-
-    # Create figure
-    fig, ax = plt.subplots(figsize=(8, 5))
-    layers = list(range(n_layers))
-
-    # x activations (red)
-    ax.fill_between(layers, x_min, x_max, color='red', alpha=0.15, label='x range')
-    ax.plot(layers, x_avg, 'r-', linewidth=2, label='x')
-    ax.scatter(layers, x_avg, color='red', s=10, zorder=5)
-
-    # y activations (blue)
-    ax.fill_between(layers, y_min, y_max, color='blue', alpha=0.15, label='y range')
-    ax.plot(layers, y_avg, 'b-', linewidth=2, label='y')
-    ax.scatter(layers, y_avg, color='blue', s=10, zorder=5)
-
-    ax.set_xlabel('Layer', fontsize=11)
-    ax.set_ylabel('% Neurons Active', fontsize=11)
-    ax.set_title('Per-Cell Sparsity Across Layers', fontsize=13, fontweight='bold')
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(-0.5, n_layers - 0.5)
-    ax.set_xticks(layers)
-    ax.set_ylim(0, 100)
-    ax.set_yticks(range(0, 101, 10))
-
-    plt.tight_layout()
-
-    # Save
-    image = fig_to_pil_image(fig)
-    image.save(save_path)
-
-    return image
